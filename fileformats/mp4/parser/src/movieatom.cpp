@@ -1,5 +1,6 @@
 /* ------------------------------------------------------------------
  * Copyright (C) 1998-2009 PacketVideo
+ * Copyright (c) 2009, Code Aurora Forum. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -130,13 +131,30 @@ OSCL_EXPORT_REF MovieAtom::MovieAtom(MP4_FF_FILE *fp,
                 }
             }
             else if ((atomType == FREE_SPACE_ATOM) ||
-                     (atomType == UUID_ATOM) ||
-                     (atomType == UNKNOWN_ATOM))
+                     (atomType == UUID_ATOM))
             {
                 if (atomSize < DEFAULT_ATOM_SIZE)
                 {
                     _success = false;
                     _mp4ErrorCode = ZERO_OR_NEGATIVE_ATOM_SIZE;
+                    break;
+                }
+                if (count < (int32)atomSize)
+                {
+                    _success = false;
+                    _mp4ErrorCode = READ_FAILED;
+                    break;
+                }
+                count -= atomSize;
+                atomSize -= DEFAULT_ATOM_SIZE;
+                AtomUtils::seekFromCurrPos(fp, atomSize);
+            }
+            else if (atomType == UNKNOWN_ATOM)
+            {
+                if (atomSize < DEFAULT_ATOM_SIZE)
+                {
+                    count -= DEFAULT_ATOM_SIZE;
+                    AtomUtils::seekFromCurrPos(fp,atomSize);
                     break;
                 }
                 if (count < (int32)atomSize)
@@ -2078,6 +2096,35 @@ int32 MovieAtom::getNumAMRFramesPerSample(uint32 trackID)
     }
 }
 
+int32 MovieAtom::getNumQCELPFramesPerSample(uint32 trackID)
+{
+    TrackAtom *trackAtom;
+    trackAtom = getTrackForID(trackID);
+
+    if (trackAtom != NULL)
+    {
+        return (trackAtom->getNumQCELPFramesPerSample());
+    }
+    else
+    {
+        return 0;
+    }
+}
+
+int32 MovieAtom::getNumEVRCFramesPerSample(uint32 trackID)
+{
+    TrackAtom *trackAtom;
+    trackAtom = getTrackForID(trackID);
+
+    if (trackAtom != NULL)
+    {
+        return (trackAtom->getNumEVRCFramesPerSample());
+    }
+    else
+    {
+        return 0;
+    }
+}
 
 MP4_ERROR_CODE MovieAtom::getMaxTrackTimeStamp(uint32 trackID,
         uint32 fileSize,

@@ -31,6 +31,7 @@
 #endif //USE_LOADABLE_MODULES
 
 #include "pvmf_omx_videodec_factory.h"
+#include "pvmf_omx_audiodec_factory.h"
 
 #if BUILD_VIDEO_DEC_NODE
 #include "pvmf_videodec_factory.h"
@@ -274,6 +275,13 @@ PVMFNodeInterface* PVPlayerNodeRegistry::CreateNode(PVUuid& aUuid, bool aHwAccel
                 PVMFNodeInterface*(*aVideoDecNodeCreateFunc)(int32, bool);
                 aVideoDecNodeCreateFunc = (PVMFNodeInterface*(*)(int32, bool)) (iType[NodeSearchCount].iNodeCreateFunc);
                 nodeInterface = (*(aVideoDecNodeCreateFunc))(priority, aHwAccelerated);
+            }
+            else if (KPVMFOMXAudioDecNodeUuid == aUuid)
+            {
+                // This is needed for LPAdecoding to configure either Hardware or software decoder dynamically
+                PVMFNodeInterface*(*aAudioDecNodeCreateFunc)(int32, bool);
+                aAudioDecNodeCreateFunc = (PVMFNodeInterface*(*)(int32, bool)) (iType[NodeSearchCount].iNodeCreateFunc);
+                nodeInterface = (*(aAudioDecNodeCreateFunc))(priority, aHwAccelerated);
             }
             else
             {

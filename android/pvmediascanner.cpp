@@ -34,6 +34,7 @@
 #include "oscl_utf8conv.h"
 #include "imp3ff.h"
 #include "impeg4file.h"
+#include "iqcpff.h"
 
 // Ogg Vorbis includes
 #include "ivorbiscodec.h"
@@ -562,6 +563,43 @@ static PVMFStatus parseWMA(const char *filename, MediaScannerClient& client)
     return PVMFSuccess;
 }
 
+static PVMFStatus parseQCP(const char *filename, MediaScannerClient& client)
+{
+    PVFile fileHandle;
+    Oscl_FileServer iFs;
+    uint32 duration;
+
+    if (iFs.Connect() != 0)
+    {
+        LOGE("iFs.Connect failed\n");
+        return PVMFFailure;
+    }
+
+    oscl_wchar output[MAX_BUFF_SIZE];
+    oscl_UTF8ToUnicode((const char *)filename, oscl_strlen((const char *)filename), (oscl_wchar *)output, MAX_BUFF_SIZE);
+    OSCL_wHeapString<OsclMemAllocator> qcpfilename(output);
+    QCPErrorType    err;
+    IQcpFile qcpFile(qcpfilename, err);
+    if (err != QCP_SUCCESS) {
+        LOGE("IQcpFile constructor returned %d.\n", err);
+        return err;
+    }
+    err = qcpFile.ParseQcpFile();
+    if (err != QCP_SUCCESS) {
+        LOGE("IQcpFile::ParseQcpFile returned %d.\n", err);
+        return err;
+    }
+    char buffer[20];
+    duration = qcpFile.GetDuration();
+    sprintf(buffer, "%d", duration);
+    if (!client.addStringTag("duration", buffer)) goto failure;
+
+    return PVMFSuccess;
+
+failure:
+    return PVMFFailure;
+}
+
 status_t PVMediaScanner::processFile(const char *path, const char* mimeType, MediaScannerClient& client)
 {
     status_t result;
@@ -592,6 +630,8 @@ status_t PVMediaScanner::processFile(const char *path, const char* mimeType, Med
         //TODO: parseWMA needs to be renamed to reflect what it is really doing,
         //ie. using OpenCORE frame metadata utility(FMU) to retrieve metadata.
         result = parseWMA(path, client);
+    } else if (extension && strcasecmp(extension, ".qcp") == 0) {
+        result = parseQCP(path, client);
     } else {
         result = PVMFFailure;
     }

@@ -9,7 +9,12 @@ LOCAL_MODULE := libpvaacparser
 
 LOCAL_CFLAGS :=  $(PV_CFLAGS)
 
-
+#Use HW AAC decoder for all 7K targets except 7x30
+ifeq ($(TARGET_BOARD_PLATFORM),msm7k)
+    ifneq ($(BOARD_USES_QCOM_AUDIO_V2), true)
+        LOCAL_CFLAGS += -DUSE_HW_AAC_DEC
+    endif
+endif
 
 LOCAL_STATIC_LIBRARIES := 
 

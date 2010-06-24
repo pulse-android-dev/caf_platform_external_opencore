@@ -1,5 +1,6 @@
 /* ------------------------------------------------------------------
  * Copyright (C) 1998-2009 PacketVideo
+ * Copyright (c) 2009, Code Aurora Forum. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -563,26 +564,15 @@ OSCL_EXPORT_REF OMX_ERRORTYPE OMX_APIENTRY   OMX_MasterGetHandle(
             return OMX_ErrorInsufficientResources;
         }
 
-        OMX_S32 hwCodecFoundWhenSoftwareCodecIsRequested = -1;
         for (ii = 0; ii < (data->iTotalNumOMXComponents); ii++)
         {
             // go through the list of supported components and find the component based on its name (identifier)
             if (!oscl_strcmp((OMX_STRING)pOMXMasterRegistry[ii].CompName, cComponentName))
             {
-                // when we are not requesting a HW accelelrated codec
-                // we prefer to find a software-based codec.
+                // when we are not requesting a HW accelelrated codec, we must find a software
+                // codec.
                 if (!bHWAccelerated) {
-                    if (!pOMXMasterRegistry[ii].bHWAccelerated)
-                    {
-                        break;
-                    }
-                    else if (hwCodecFoundWhenSoftwareCodecIsRequested == -1)
-                    {
-                        // Store the first hardware-based codec found
-                        // In case we could not find any software-based codec, we will
-                        // use this hareware-based codec
-                        hwCodecFoundWhenSoftwareCodecIsRequested = ii;
-                    }
+                    if (!pOMXMasterRegistry[ii].bHWAccelerated) break;
                 } else {
                     break;
                 }
@@ -590,24 +580,15 @@ OSCL_EXPORT_REF OMX_ERRORTYPE OMX_APIENTRY   OMX_MasterGetHandle(
         }
         if (ii == (data->iTotalNumOMXComponents))
         {
-            if (hwCodecFoundWhenSoftwareCodecIsRequested == -1)
+            // could not find a component with the given name
+            OsclSingletonRegistry::registerInstanceAndUnlock(data, OSCL_SINGLETON_ID_OMXMASTERCORE, error);
+            if (error)
             {
-                // could not find ANY component with the given name
-                OsclSingletonRegistry::registerInstanceAndUnlock(data, OSCL_SINGLETON_ID_OMXMASTERCORE, error);
-                if (error)
-                {
-                    //registry error
-                    Status = OMX_ErrorUndefined;
-                    return Status;
-                }
-                return OMX_ErrorComponentNotFound;
+                //registry error
+                Status = OMX_ErrorUndefined;
+                return Status;
             }
-            else
-            {
-                // we have not found a sw-based codec while requesting sw-based codecs.
-                // but we found a hw-based codec, and as a last resort, use it anyway.
-                ii = hwCodecFoundWhenSoftwareCodecIsRequested;
-            }
+            return OMX_ErrorComponentNotFound;
         }
 
         // call the appropriate GetHandle for the component
@@ -945,9 +926,24 @@ OMX_BOOL PV_OMXConfigParser(
                 aInputs.iMimeType = PVMF_MIME_AMRWB;
 
             }
+            else if (0 == oscl_strcmp(pInputs->cComponentRole, (OMX_STRING)"audio_decoder.amrwbp"))
+            {
+                aInputs.iMimeType = PVMF_MIME_AMRWBP_IETF;
+
+            }
             else if (0 == oscl_strcmp(pInputs->cComponentRole, (OMX_STRING)"audio_decoder.mp3"))
             {
                 aInputs.iMimeType = PVMF_MIME_MP3;
+
+            }
+            else if (0 == oscl_strcmp(pInputs->cComponentRole, (OMX_STRING)"audio_decoder.Qcelp13"))
+            {
+                aInputs.iMimeType = PVMF_MIME_QCELP;
+
+            }
+            else if (0 == oscl_strcmp(pInputs->cComponentRole, (OMX_STRING)"audio_decoder.evrc"))
+            {
+                aInputs.iMimeType = PVMF_MIME_EVRC;
 
             }
             else
@@ -1058,7 +1054,10 @@ OSCL_EXPORT_REF OMX_BOOL OMX_MasterConfigParser(
             }
 
             OMX_U32 index = pOMXMasterRegistry[ii].OMXCoreIndex;
-            if (pInterface[index]->GetpOMXConfigParser() == NULL)
+            if ((pInterface[index]->GetpOMXConfigParser() == NULL) ||
+                (0 == oscl_strncmp(((OMXConfigParserInputs*)aInputParameters)->cComponentRole,
+                                    (OMX_STRING)"audio_decoder.aac",
+                                    oscl_strlen("audio_decoder.aac"))))
             {
                 //The OMX core does not have config parser - use PV config parser
                 Status = PV_OMXConfigParser(aInputParameters, aOutputParameters);

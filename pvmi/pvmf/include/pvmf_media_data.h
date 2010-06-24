@@ -116,6 +116,10 @@ class PVMFMediaData : public PVMFMediaMsg
         PVMFMediaData(): hdr_ptr(0), impl_ptr() {};
         PVMFMediaMsgHeader* hdr_ptr;
         OsclSharedPtr<PVMFMediaDataImpl> impl_ptr;
+
+    public:
+        OSCL_IMPORT_REF virtual void setPMEMFD(int32 fd);
+        OSCL_IMPORT_REF virtual int32 getPMEMFD();
 };
 
 typedef OsclSharedPtr<PVMFMediaData> PVMFSharedMediaDataPtr;

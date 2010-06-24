@@ -1,5 +1,6 @@
 /* ------------------------------------------------------------------
  * Copyright (C) 1998-2009 PacketVideo
+ * Copyright (c) 2009, Code Aurora Forum. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,6 +34,8 @@
 #define PVOMXAUDIODEC_AMRNB_SAMPLES_PER_FRAME 160
 #define PVOMXAUDIODEC_AMRWB_SAMPLES_PER_FRAME 320
 #define PVOMXAUDIODEC_MP3_DEFAULT_SAMPLES_PER_FRAME 1152
+#define PVOMXAUDIODEC_QCELP_SAMPLES_PER_FRAME 160
+#define PVOMXAUDIODEC_EVRC_SAMPLES_PER_FRAME 160
 
 struct channelSampleInfo
 {
@@ -82,7 +85,7 @@ class PVMFOMXAudioDecNode
 
 {
     public:
-        PVMFOMXAudioDecNode(int32 aPriority);
+        PVMFOMXAudioDecNode(int32 aPriority, bool aHwAccelerated);
         ~PVMFOMXAudioDecNode();
 
         // From PVMFNodeInterface
@@ -119,7 +122,7 @@ class PVMFOMXAudioDecNode
         bool ProcessIncomingMsg(PVMFPortInterface* aPort);
         PVMFStatus HandlePortReEnable();
 
-        bool InitDecoder(PVMFSharedMediaDataPtr&);
+        PVMFStatus InitDecoder(PVMFSharedMediaDataPtr&);
 
         bool NegotiateComponentParameters(OMX_PTR aOutputParameters);
         bool GetSetCodecSpecificInfo();
@@ -146,6 +149,7 @@ class PVMFOMXAudioDecNode
         PV_LATM_Parser *iLATMParser;
         uint8 *iLATMConfigBuffer;
         uint32 iLATMConfigBufferSize;
+        bool   bHWAccelerated;
 
 };
 

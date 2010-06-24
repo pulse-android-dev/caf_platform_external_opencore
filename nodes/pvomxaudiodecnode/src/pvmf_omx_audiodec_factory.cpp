@@ -33,10 +33,10 @@ OSCL_DLL_ENTRY_POINT_DEFAULT()
 
 
 ////////////////////////////////////////////////////////////////////////////
-OSCL_EXPORT_REF PVMFNodeInterface* PVMFOMXAudioDecNodeFactory::CreatePVMFOMXAudioDecNode(int32 aPriority)
+OSCL_EXPORT_REF PVMFNodeInterface* PVMFOMXAudioDecNodeFactory::CreatePVMFOMXAudioDecNode(int32 aPriority, bool aHwAccelerated)
 {
     PVMFNodeInterface* node = NULL;
-    node = new PVMFOMXAudioDecNode(aPriority);
+    node = new PVMFOMXAudioDecNode(aPriority, aHwAccelerated);
     if (node == NULL)
     {
         OSCL_LEAVE(OsclErrNoMemory);

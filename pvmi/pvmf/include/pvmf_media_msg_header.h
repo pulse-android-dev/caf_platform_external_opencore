@@ -44,7 +44,8 @@ struct PVMFMediaMsgHeader
             duration(0),
             seqnum(0),
             stream_id(0),
-            format_id(0)
+            format_id(0),
+            pmem_fd(-1)
     {};
 
     PVMFTimestamp timestamp;
@@ -53,6 +54,7 @@ struct PVMFMediaMsgHeader
     uint32 stream_id;
     PVUid32 format_id;
     OsclRefCounterMemFrag format_spec_info;
+    int32 pmem_fd;
 
 };
 

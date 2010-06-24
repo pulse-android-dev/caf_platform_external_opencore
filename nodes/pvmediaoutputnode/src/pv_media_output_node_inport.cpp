@@ -32,6 +32,13 @@
 #include "latmpayloadparser.h"
 #include "media_clock_converter.h"
 #include "time_comparison_utils.h"
+#include "oscl_time.h"
+
+#include <cutils/properties.h>
+
+#undef LOG_TAG
+#define LOG_TAG "PVMediaOutputNodePort"
+#include <utils/Log.h>
 
 #define LOGDATAPATH(x)  PVLOGGER_LOGMSG(PVLOGMSG_INST_LLDBG, iDatapathLogger, PVLOGMSG_INFO, x);
 
@@ -169,6 +176,16 @@ PVMediaOutputNodePort::PVMediaOutputNodePort(PVMediaOutputNode* aNode)
     iDatapathLoggerIn = PVLogger::GetLoggerObject("datapath.sinknode.in");
     iDatapathLoggerOut = PVLogger::GetLoggerObject("datapath.sinknode.out");
     iReposLogger = PVLogger::GetLoggerObject("pvplayerrepos.mionode");
+
+    //Statistics profiling
+    char value[PROPERTY_VALUE_MAX];
+    mStatistics = false;
+    property_get("persist.debug.pv.statistics", value, "0");
+    if(atoi(value)) mStatistics = true;
+    numTimesAVSyncLoss = 0;
+    maxEarlyDelta = 0;
+    maxLateDelta = 0;
+    maxTimeSyncLoss = 0;
 }
 
 ////////////////////////////////////////////////////////////////////////////
@@ -191,6 +208,8 @@ void PVMediaOutputNodePort::ClearCleanupQueue()
 ////////////////////////////////////////////////////////////////////////////
 PVMediaOutputNodePort::~PVMediaOutputNodePort()
 {
+    if(mStatistics) statsSyncLoss();
+
     Disconnect();
     PvmfPortBaseImpl::ClearMsgQueues();
     //cancel any pending write operations
@@ -1210,6 +1229,7 @@ void PVMediaOutputNodePort::SendMediaData()
         mediaxferhdr.stream_id = mediaData->getStreamID();
         mediaxferhdr.private_data_length = privatedatalength;
         mediaxferhdr.private_data_ptr = privatedataptr;
+        mediaxferhdr.pmem_fd = mediaData->getPMEMFD();
         err = WriteDataToMIO(cmdId, mediaxferhdr, frag);
 
         if (err != OsclErrNone)
@@ -1485,11 +1505,22 @@ PVMediaOutputNodePort::CheckMediaTimeStamp(uint32& aDelta)
         uint32 clock_msec32;
         bool overflowFlag = false;
 
+        uint32 duration = 0;
+        if (iCurrentMediaMsg->getFormatID() < PVMF_MEDIA_CMD_FORMAT_IDS_START)
+        {
+            // get the marker info to check if duration is available
+            PVMFSharedMediaDataPtr mediaData;
+            convertToPVMFMediaData(mediaData, iCurrentMediaMsg);
+
+            if (mediaData->getMarkerInfo() & PVMF_MEDIA_DATA_MARKER_INFO_DURATION_AVAILABLE_BIT)
+            {
+                duration = mediaData->getDuration();
+            }
+        }
         iClock->GetCurrentTime32(clock_msec32, overflowFlag, PVMF_MEDIA_CLOCK_MSEC);
 
-
         uint32 clock_adjforearlymargin = clock_msec32 + iEarlyMargin;
-        uint32 ts_adjforlatemargin = aTimeStamp + iLateMargin;
+        uint32 ts_adjforlatemargin = aTimeStamp + iLateMargin + duration;
 
         if ((clock_adjforearlymargin - aTimeStamp) > WRAP_THRESHOLD)
         {
@@ -1530,6 +1561,9 @@ PVMediaOutputNodePort::CheckMediaTimeStamp(uint32& aDelta)
                                          clock_msec32,
                                          aDelta));
             }
+
+            if(mStatistics) statsCatchup(aTimeStamp, clock_msec32, aDelta);
+
             iConsecutiveFramesDropped = 0;
             return PVMF_MEDIAOUTPUTNODEPORT_MEDIA_EARLY;
         }
@@ -1558,6 +1592,15 @@ PVMediaOutputNodePort::CheckMediaTimeStamp(uint32& aDelta)
                     iNode->ReportInfoEvent(PVMFInfoVideoTrackFallingBehind, (OsclAny*)NULL);
                 }
             }
+
+            if(mStatistics) {
+                if(iConsecutiveFramesDropped == 1) {
+                    statsCatchupTimeStart = clock_msec32;
+                    LOGW("PVMediaOutputNodePort::CheckMediaTimeStamp Video loss sync start");
+                }
+                statsLate(aTimeStamp, clock_msec32, aDelta);
+            }
+
             return PVMF_MEDIAOUTPUTNODEPORT_MEDIA_LATE;
         }
         else
@@ -1568,6 +1611,12 @@ PVMediaOutputNodePort::CheckMediaTimeStamp(uint32& aDelta)
                                      iCurrentMediaMsg->getSeqNum(),
                                      aTimeStamp,
                                      clock_msec32));
+            if(mStatistics) {
+                if(aTimeStamp > clock_msec32) aDelta = aTimeStamp - clock_msec32;
+                else aDelta = clock_msec32 - aTimeStamp;
+                statsOnTime(aTimeStamp,clock_msec32,aDelta);
+            }
+
             iConsecutiveFramesDropped = 0;
             return PVMF_MEDIAOUTPUTNODEPORT_MEDIA_ON_TIME;
         }
@@ -2545,6 +2594,9 @@ void PVMediaOutputNodePort::SetSkipTimeStamp(uint32 aSkipTS,
     PVMF_MOPORT_LOGDATAPATH((0, "PVMediaOutputNodePort::SetSkipTimeStamp: TS=%d, Fmt=%s",
                              aSkipTS,
                              iSinkFormatString.get_str()));
+    //Seek profiling start
+    if(mStatistics) SeekProfilingStart();
+
     iSkipTimestamp = aSkipTS;
     iRecentStreamID = aStreamID;
     iSendStartOfDataEvent = true;
@@ -2641,7 +2693,17 @@ bool PVMediaOutputNodePort::DataToSkip(PVMFSharedMediaMsgPtr& aMsg)
         if (iSendStartOfDataEvent == true)
         {
             delta = 0;
-            bool tsEarly = PVTimeComparisonUtils::IsEarlier(aMsg->getTimestamp(), iSkipTimestamp, delta);
+            // get the marker info to check if duration is available
+            PVMFSharedMediaDataPtr mediaData;
+            convertToPVMFMediaData(mediaData, aMsg);
+
+            uint32 duration = 0;
+            if (mediaData->getMarkerInfo() & PVMF_MEDIA_DATA_MARKER_INFO_DURATION_AVAILABLE_BIT)
+            {
+                duration = mediaData->getDuration();
+            }
+
+            bool tsEarly = PVTimeComparisonUtils::IsEarlier((aMsg->getTimestamp() + duration), iSkipTimestamp, delta);
             if (tsEarly && delta > 0)
             {
                 //a zero delta could mean the timestamps are equal
@@ -2649,6 +2711,10 @@ bool PVMediaOutputNodePort::DataToSkip(PVMFSharedMediaMsgPtr& aMsg)
             }
         }
     }
+
+    //Seek profiling end
+    if(mStatistics) SeekProfilingEnd();
+
     return false;
 }
 
@@ -2850,4 +2916,66 @@ int32 PVMediaOutputNodePort::WriteDataToMIO(int32 &aCmdId, PvmiMediaXferHeader &
                                                         aMediaxferhdr,
                                                         (OsclAny*) & iWriteAsyncContext););
     return leavecode;
+}
+
+void PVMediaOutputNodePort::SeekProfilingStart()
+{
+    TimeValue currentTime;
+    iLatencyProfiling = true;
+    currentTime.set_to_current_time();
+    iStartMilliSecProfiling = currentTime.to_msec();
+}
+
+void PVMediaOutputNodePort::SeekProfilingEnd()
+{
+    TimeValue currentTime;
+    currentTime.set_to_current_time();
+    iEndMilliSecProfiling = currentTime.to_msec();
+
+    if(iLatencyProfiling && iRecentStreamID){
+        LOGE("======================================================");
+        LOGE("PVMediaOutputNodePort: Fmt = %s, seek latency = %d", iSinkFormatString.get_str()
+                                                                 , iEndMilliSecProfiling - iStartMilliSecProfiling);
+        LOGE("======================================================");
+        iLatencyProfiling = false;
+    }
+}
+
+inline
+void PVMediaOutputNodePort::statsCatchup(uint32 ts, uint32 clock, uint32 delta)
+{
+    if(iConsecutiveFramesDropped > 0) {
+        LOGW("PVMediaOutputNodePort: - Frames dropped before catching up = %lu Timestamp = %lu, Clock = %lu, Delta = %lu",iConsecutiveFramesDropped,ts,clock,delta);
+        numTimesAVSyncLoss++;
+        if( maxTimeSyncLoss < (clock - statsCatchupTimeStart)) maxTimeSyncLoss = clock - statsCatchupTimeStart;
+    }
+}
+
+inline
+void PVMediaOutputNodePort::statsLate(uint32 ts, uint32 clock, uint32 delta)
+{
+    if(delta > maxLateDelta) maxLateDelta = delta;
+    if(maxLateDelta > 0x80000000) maxLateDelta = 0;
+    LOGW("PVMediaOutputNodePort: - Video Behind Timestamp = %lu, Clock = %lu, Delta = %lu",ts, clock, delta);
+}
+
+inline
+void PVMediaOutputNodePort::statsOnTime(uint32 ts, uint32 clock, uint32 delta)
+{
+    statsCatchup(ts,clock,delta);
+    if(ts > clock) {
+        if(delta > maxEarlyDelta) maxEarlyDelta = delta;
+        LOGW("PVMediaOutputNodePort: - Video Ahead Timestamp = %lu, Clock = %lu, Delta = %lu", ts, clock, delta);
+    }
+    else statsLate(ts,clock,delta);
+}
+
+void PVMediaOutputNodePort::statsSyncLoss()
+{
+    LOGW("=============================================================");
+    LOGW("PVMediaOutputNodePort: Number of times AV Sync Losses = %lu", numTimesAVSyncLoss);
+    LOGW("PVMediaOutputNodePort: Max Video Ahead time delta = %lu", maxEarlyDelta);
+    LOGW("PVMediaOutputNodePort: Max Video Behind time delta = %lu", maxLateDelta);
+    LOGW("PVMediaOutputNodePort: Max Time sync loss = %lu",maxTimeSyncLoss);
+    LOGW("=============================================================");
 }

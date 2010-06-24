@@ -766,6 +766,24 @@ class PVPlayerInterface
          **/
         OSCL_IMPORT_REF static void GetSDKInfo(PVSDKInfo& aSDKInfo);
 
+        /**
+         * Returns Input format type of the source file.
+         *
+         * @param aInputformat
+         *         A reference to a format type. On success the API returns the format type of the input source.
+         *
+         **/
+        virtual PVMFStatus GetDataSourceFormatSync(PVMFFormatType& aInputformat, const OsclAny* aContextData = NULL) = 0;
+
+        /**
+         * Returns duration of the source file.
+         *
+         * @param aDuration
+         *         A reference to input source duration. On success the
+         *         API returns the the input source duration.
+         *
+         **/
+        virtual PVMFStatus GetSourceDurationSync(uint32& aDuration, const OsclAny* aContextData = NULL) = 0;
 };
 
 

@@ -3245,10 +3245,13 @@ void PVMFDownloadManagerSubNodeContainerBase::CommandDone(PVMFStatus aStatus, PV
     // Watch for recognizer close completion after a start failure
     else if (iContainer->iRecognizerError)
     {
-        OSCL_ASSERT(iCmd == ERecognizerClose);
-        iContainer->iRecognizerError = false;
-        //restore the original error code from the recognizer start.
-        status = iContainer->iRecognizerStartStatus;
+        if(iCmd == ERecognizerClose)
+        {
+            OSCL_ASSERT(iCmd == ERecognizerClose);
+            iContainer->iRecognizerError = false;
+            //restore the original error code from the recognizer start.
+            status = iContainer->iRecognizerStartStatus;
+        }
     }
 
     //Check whether the node command is being cancelled.

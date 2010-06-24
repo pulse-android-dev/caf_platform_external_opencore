@@ -1,5 +1,6 @@
 /* ------------------------------------------------------------------
  * Copyright (C) 1998-2009 PacketVideo
+ * Copyright (c) 2009, Code Aurora Forum. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -78,6 +79,8 @@
 
 // For recognizer registry
 #include "pvmf_recognizer_registry.h"
+
+#include "pv_player_datasource.h"
 
 #include "pvmi_datastreamsyncinterface_ref_factory.h"
 
@@ -324,6 +327,31 @@ PVCommandId PVPlayerEngine::GetPVPlayerState(PVPlayerState& aState, const OsclAn
     return AddCommandToQueue(PVP_ENGINE_COMMAND_GET_PVPLAYER_STATE, (OsclAny*)aContextData, &paramvec);
 }
 
+PVMFStatus PVPlayerEngine::GetDataSourceFormatSync(PVMFFormatType& inputformat, const OsclAny* aContextData)
+{
+    PVLOGGER_LOGMSG(PVLOGMSG_INST_LLDBG, iLogger, PVLOGMSG_STACK_TRACE, (0, "PVPlayerEngine::GetDataSourceFormatSync()"));
+    Oscl_Vector<PVPlayerEngineCommandParamUnion, OsclMemAllocator> paramvec;
+    paramvec.reserve(1);
+    paramvec.clear();
+    PVPlayerEngineCommandParamUnion param;
+    param.pOsclAny_value = (OsclAny*) & inputformat;
+    paramvec.push_back(param);
+    PVPlayerEngineCommand cmd(PVP_ENGINE_COMMAND_GET_DATASOURCE_FORMAT, -1, NULL, &paramvec);
+    return DoGetDataSourceFormat(cmd,true);
+}
+
+PVMFStatus PVPlayerEngine::GetSourceDurationSync(uint32& aDuration, const OsclAny* aContextData)
+{
+    PVLOGGER_LOGMSG(PVLOGMSG_INST_LLDBG, iLogger, PVLOGMSG_STACK_TRACE, (0, "PVPlayerEngine::GetSourceDurationSync()"));
+    Oscl_Vector<PVPlayerEngineCommandParamUnion, OsclMemAllocator> paramvec;
+    paramvec.reserve(1);
+    paramvec.clear();
+    PVPlayerEngineCommandParamUnion param;
+    param.pUint32_value = & aDuration;
+    paramvec.push_back(param);
+    PVPlayerEngineCommand cmd(PVP_ENGINE_COMMAND_GET_SOURCE_DURATION, -1, NULL, &paramvec);
+    return DoGetSourceDuration(cmd,true);
+}
 
 PVMFStatus PVPlayerEngine::GetPVPlayerStateSync(PVPlayerState& aState)
 {
@@ -1467,6 +1495,14 @@ void PVPlayerEngine::Run()
                 cmdstatus = DoGetPVPlayerState(cmd, false);
                 break;
 
+            case PVP_ENGINE_COMMAND_GET_DATASOURCE_FORMAT:
+                cmdstatus = DoGetDataSourceFormat(cmd, false);
+                break;
+
+            case PVP_ENGINE_COMMAND_GET_SOURCE_DURATION:
+                cmdstatus = DoGetSourceDuration(cmd, false);
+                break;
+
             case PVP_ENGINE_COMMAND_GET_PVPLAYER_STATE_OOTSYNC:
                 ootsync = true;
                 cmdstatus = DoGetPVPlayerState(cmd, true);
@@ -1723,7 +1759,9 @@ bool PVPlayerEngine::FindTrackForDatapathUsingMimeString(bool& aVideoTrack, bool
                  (pv_mime_strcmp(mimeString, PVMF_MIME_AMRWB) == 0) ||
                  (pv_mime_strcmp(mimeString, PVMF_MIME_AMR_IETF) == 0) ||
                  (pv_mime_strcmp(mimeString, PVMF_MIME_AMRWB_IETF) == 0) ||
+                 (pv_mime_strcmp(mimeString, PVMF_MIME_AMRWBP_IETF) == 0) ||
                  (pv_mime_strcmp(mimeString, PVMF_MIME_AMR_IF2) == 0) ||
+                 (pv_mime_strcmp(mimeString, PVMF_MIME_QCELP) == 0) ||
                  (pv_mime_strcmp(mimeString, PVMF_MIME_EVRC) == 0) ||
                  (pv_mime_strcmp(mimeString, PVMF_MIME_MP3) == 0) ||
                  (pv_mime_strcmp(mimeString, PVMF_MIME_ADIF) == 0) ||
@@ -1800,7 +1838,9 @@ bool PVPlayerEngine::FindDatapathForTrackUsingMimeString(bool aVideoTrack, bool 
                         (pv_mime_strcmp(mimeString, PVMF_MIME_AMRWB) == 0) ||
                         (pv_mime_strcmp(mimeString, PVMF_MIME_AMR_IETF) == 0) ||
                         (pv_mime_strcmp(mimeString, PVMF_MIME_AMRWB_IETF) == 0) ||
+                        (pv_mime_strcmp(mimeString, PVMF_MIME_AMRWBP_IETF) == 0) ||
                         (pv_mime_strcmp(mimeString, PVMF_MIME_AMR_IF2) == 0) ||
+                        (pv_mime_strcmp(mimeString, PVMF_MIME_QCELP) == 0) ||
                         (pv_mime_strcmp(mimeString, PVMF_MIME_EVRC) == 0) ||
                         (pv_mime_strcmp(mimeString, PVMF_MIME_MP3) == 0) ||
                         (pv_mime_strcmp(mimeString, PVMF_MIME_ADIF) == 0) ||
@@ -3905,6 +3945,8 @@ void PVPlayerEngine::DoCancelCommandBeingProcessed(void)
         case PVP_ENGINE_COMMAND_GET_LOG_LEVEL:
         case PVP_ENGINE_COMMAND_CANCEL_ALL_COMMANDS:
         case PVP_ENGINE_COMMAND_GET_PVPLAYER_STATE:
+        case PVP_ENGINE_COMMAND_GET_DATASOURCE_FORMAT:
+        case PVP_ENGINE_COMMAND_GET_SOURCE_DURATION:
         case PVP_ENGINE_COMMAND_ADD_DATA_SINK:
         case PVP_ENGINE_COMMAND_GET_CURRENT_POSITION:
         case PVP_ENGINE_COMMAND_START:
@@ -3946,7 +3988,6 @@ PVMFStatus PVPlayerEngine::DoCancelPendingNodeDatapathCommand()
                 {
                     PVLOGGER_LOGMSG(PVLOGMSG_INST_HLDBG, iLogger, PVLOGMSG_ERR,
                                     (0, "PVPlayerEngine::DoCancelPendingNodeDatapathCommand() CancelAllCommands() on source node did a leave"));
-                    FreeEngineContext(iCurrentContextList[i]);
                 }
             }
             else if (iCurrentContextList[i]->iEngineDatapath != NULL)
@@ -3963,7 +4004,6 @@ PVMFStatus PVPlayerEngine::DoCancelPendingNodeDatapathCommand()
                     {
                         PVLOGGER_LOGMSG(PVLOGMSG_INST_HLDBG, iLogger, PVLOGMSG_ERR,
                                         (0, "PVPlayerEngine::DoCancelPendingNodeDatapathCommand() CancelAllCommands() on sink node did a leave"));
-                        FreeEngineContext(iCurrentContextList[i]);
                     }
                 }
                 else if (iCurrentContextList[i]->iNode == iCurrentContextList[i]->iEngineDatapath->iDecNode)
@@ -3978,7 +4018,6 @@ PVMFStatus PVPlayerEngine::DoCancelPendingNodeDatapathCommand()
                     {
                         PVLOGGER_LOGMSG(PVLOGMSG_INST_HLDBG, iLogger, PVLOGMSG_ERR,
                                         (0, "PVPlayerEngine::DoCancelPendingNodeDatapathCommand() CancelAllCommands() on dec node did a leave"));
-                        FreeEngineContext(iCurrentContextList[i]);
                     }
                 }
                 else
@@ -4022,7 +4061,6 @@ PVMFStatus PVPlayerEngine::DoCancelPendingNodeDatapathCommand()
             {
                 PVLOGGER_LOGMSG(PVLOGMSG_INST_HLDBG, iLogger, PVLOGMSG_ERR,
                                 (0, "PVPlayerEngine::DoCancelPendingNodeDatapathCommand() CancelAllCommands() on recognizer node did a leave"));
-                FreeEngineContext(iCurrentContextList[i]);
             }
         }
         else
@@ -4031,6 +4069,7 @@ PVMFStatus PVPlayerEngine::DoCancelPendingNodeDatapathCommand()
             PVLOGGER_LOGMSG(PVLOGMSG_INST_HLDBG, iLogger, PVLOGMSG_ERR, (0, "PVPlayerEngine::DoCancelPendingNodeDatapathCommand() No pending node or datapath. Asserting"));
             OSCL_ASSERT(false);
         }
+        FreeEngineContext(iCurrentContextList[i]);
     }
 
     if (iNumberCancelCmdPending == 0)
@@ -4305,6 +4344,47 @@ PVMFStatus PVPlayerEngine::DoGetPVPlayerState(PVPlayerEngineCommand& aCmd, bool 
     return PVMFSuccess;
 }
 
+PVMFStatus PVPlayerEngine::DoGetDataSourceFormat(PVPlayerEngineCommand& aCmd, bool aSyncCmd)
+{
+    PVLOGGER_LOGMSG(PVLOGMSG_INST_LLDBG, iLogger, PVLOGMSG_STACK_TRACE, (0, "PVPlayerEngine::DoGetDataSourceFormat() In"));
+
+    PVMFFormatType* format = (PVMFFormatType* ) (aCmd.GetParam(0).pOsclAny_value);
+
+    if (format == NULL)
+    {
+        PVLOGGER_LOGMSG(PVLOGMSG_INST_HLDBG, iLogger, PVLOGMSG_ERR, (0, "PVPlayerEngine::DoGetDataSourceFormat() could not recognize format."));
+        return PVMFErrArgument;
+    }
+
+    // Get player state using internal function
+    *format = iSourceFormatType;
+
+    if (!aSyncCmd)
+    {
+        EngineCommandCompleted(aCmd.GetCmdId(), aCmd.GetContext(), PVMFSuccess);
+    }
+
+    PVLOGGER_LOGMSG(PVLOGMSG_INST_LLDBG, iLogger, PVLOGMSG_STACK_TRACE, (0, "PVPlayerEngine::DoGetDataSourceFormat() Out"));
+    return PVMFSuccess;
+}
+
+PVMFStatus PVPlayerEngine::DoGetSourceDuration(PVPlayerEngineCommand& aCmd, bool aSyncCmd)
+{
+    PVLOGGER_LOGMSG(PVLOGMSG_INST_LLDBG, iLogger, PVLOGMSG_STACK_TRACE, (0, "PVPlayerEngine::DoGetSourceDuration() In"));
+
+    uint32* aDuration = (uint32* ) (aCmd.GetParam(0).pOsclAny_value);
+
+    // Get player state using internal function
+    *aDuration = iSourceDurationInMS;
+
+    if (!aSyncCmd)
+    {
+        EngineCommandCompleted(aCmd.GetCmdId(), aCmd.GetContext(), PVMFSuccess);
+    }
+
+    PVLOGGER_LOGMSG(PVLOGMSG_INST_LLDBG, iLogger, PVLOGMSG_STACK_TRACE, (0, "PVPlayerEngine::DoGetSourceDuration() Out"));
+    return PVMFSuccess;
+}
 
 PVMFStatus PVPlayerEngine::DoAddDataSource(PVPlayerEngineCommand& aCmd)
 {
@@ -6614,7 +6694,11 @@ PVMFStatus PVPlayerEngine::DoSinkNodeTrackSelection(PVCommandId aCmdId, OsclAny*
     PvmiKvp kvpFormatType;
     PvmiKvp kvpFSI;
 
+    // Check if lpadecode is supported
+    PvmiKvp kvpLPADecode;
+
     OSCL_StackString<64> iKVPFormatType = _STRLIT_CHAR(PVMF_FORMAT_TYPE_VALUE_KEY);
+    OSCL_StackString<64> iKVPLPADecode = _STRLIT_CHAR(PVMF_LPA_DECODE_VALUE_KEY);
 
     const char* aFormatValType = PVMF_FORMAT_SPECIFIC_INFO_KEY;
 
@@ -6622,8 +6706,10 @@ PVMFStatus PVPlayerEngine::DoSinkNodeTrackSelection(PVCommandId aCmdId, OsclAny*
 
     kvpFormatType.key = NULL;
     kvpFSI.key = NULL;
+    kvpLPADecode.key = NULL;
 
     kvpFormatType.key = iKVPFormatType.get_str();
+    kvpLPADecode.key = iKVPLPADecode.get_str();
 
     kvpFSI.length = oscl_strlen(aFormatValType) + 1; // +1 for \0
     kvpFSI.key = (PvmiKeyType)alloc.ALLOCATE(kvpFSI.length);
@@ -6672,6 +6758,22 @@ PVMFStatus PVPlayerEngine::DoSinkNodeTrackSelection(PVCommandId aCmdId, OsclAny*
                             iTrackSelectionList[j].iTsSinkNode = iDatapathList[i].iSinkNode;
                             iTrackSelectionList[j].iTsSinkNodeCapConfigIF = iDatapathList[i].iSinkNodeCapConfigIF;
                             iTrackSelectionList[j].iTsTrackValidForPlayableList = true;
+                        }
+                    }
+
+                    // If the Source Format Type is MP3 only, check for LPA
+                    // support
+                    if ( (iSourceFormatType == PVMF_MIME_MP3FF) ||
+                         (iSourceFormatType == PVMF_MIME_MP3) )
+                    {
+
+                        // Check if the MIO supports the LPA decode mode
+                        status = iDatapathList[i].iSinkNodeCapConfigIF->verifyParametersSync(NULL, &kvpLPADecode, 1);
+
+                        if (status == PVMFSuccess)
+                        {
+                            // MIO is LPA decode enabled. Disable Hardware acceleration.
+                            iHwAccelerated = false;
                         }
                     }
                 }
@@ -8418,6 +8520,15 @@ PVMFStatus PVPlayerEngine::DoPause(PVPlayerEngineCommand& aCmd)
             break;
 
         case PVP_STATE_PREPARED :
+
+            if (aCmd.GetCmdType() == PVP_ENGINE_COMMAND_PAUSE)
+            {
+                // It is possible to get pause command in the prepare state.
+                // This is ideally sent during the initial bootup time and to handle the TCXO
+                // shutdown for hardware decoders.
+                break;
+            }
+
             if (aCmd.GetCmdType() == PVP_ENGINE_COMMAND_PAUSE_DUE_TO_ENDOFCLIP)
             {
                 //It is possible in repositioning to end use-case that
@@ -8656,6 +8767,14 @@ PVMFStatus PVPlayerEngine::DoResume(PVPlayerEngineCommand& aCmd)
     else
     {
         retval = DoSourceNodeStart(aCmd.GetCmdId(), aCmd.GetContext());
+
+        // Explicitly start the playback clock. Sometimes we see that the
+        // playbackclock is not started, during Resume / TCXO shutdown
+        if (PVMFSuccess == retval)
+        {
+            UpdateCurrentEndPosition(iCurrentEndPosition);
+            StartPlaybackClock();
+        }
     }
 
     if (retval != PVMFSuccess)
@@ -16804,8 +16923,12 @@ void PVPlayerEngine::StartPlaybackClock()
         }
     }
 
-    // To get regular play status events
-    StartPlaybackStatusTimer();
+    // Disable regular updates for software / LPA decoder
+    if (iHwAccelerated)
+    {
+        // To get regular play status events
+        StartPlaybackStatusTimer();
+    }
 
     // Restart the end time check if enabled
     if (iEndTimeCheckEnabled)

@@ -1,6 +1,7 @@
 /*
  * Copyright (C) 2008 The Android Open Source Project
  * Copyright (C) 2008 HTC Inc.
+ * Copyright (c) 2009-2010, Code Aurora Forum. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -53,8 +54,8 @@ AndroidCameraInput::AndroidCameraInput()
     iAuthorClock(NULL),
     iClockNotificationsInf(NULL),
     iAudioFirstFrameTs(0),
-    iAudioLossDuration(0),
-    pPmemInfo(NULL)
+    pPmemInfo(NULL),
+    iPostCameraFrameAO(NULL)
 {
     LOGV("constructor(%p)", this);
     iCmdIdCounter = 0;
@@ -73,7 +74,6 @@ AndroidCameraInput::AndroidCameraInput()
     mFlags = 0;
     iFrameQueue.reserve(5);
     iFrameQueueMutex.Create();
-    iAudioLossMutex.Create();
 
     // setup callback listener
     mListener = new AndroidCameraInputListener(this);
@@ -94,17 +94,19 @@ void AndroidCameraInput::ReleaseQueuedFrames()
 #endif
         mCamera->releaseRecordingFrame(data.iFrameBuffer);
     }
-    if(pPmemInfo)
-    {
-        delete pPmemInfo;
-        pPmemInfo = NULL;
-    }
     iFrameQueueMutex.Unlock();
 }
 
 AndroidCameraInput::~AndroidCameraInput()
 {
     LOGV("destructor");
+
+    if(iPostCameraFrameAO)
+    {
+        OSCL_DELETE(iPostCameraFrameAO);
+        iPostCameraFrameAO = NULL;
+    }
+
     if (mCamera != NULL) {
         mCamera->setListener(NULL);
         ReleaseQueuedFrames();
@@ -123,8 +125,12 @@ AndroidCameraInput::~AndroidCameraInput()
         mCamera.clear();
     }
     iFrameQueueMutex.Close();
-    iAudioLossMutex.Close();
     mListener.clear();
+    if(pPmemInfo)
+    {
+        delete pPmemInfo;
+        pPmemInfo = NULL;
+    }
 }
 
 PVMFStatus AndroidCameraInput::connect(PvmiMIOSession& aSession,
@@ -180,6 +186,8 @@ PvmiMediaTransfer* AndroidCameraInput::createMediaTransfer(
         OSCL_LEAVE(OsclErrArgument);
         return NULL;
     }
+
+    iPostCameraFrameAO = OSCL_NEW(AndroidCameraInputThreadSafeCallbackAO,(this,10));
 
     return (PvmiMediaTransfer*)this;
 }
@@ -426,7 +434,7 @@ void AndroidCameraInput::writeComplete(PVMFStatus aStatus,
 #endif
     // View finder freeze detection
     // Note for low frame rate, we don't bother to log view finder freezes
-    int processingTimeInMs = (systemTime()/1000000L - (iAudioFirstFrameTs + iAudioLossDuration)) - data.iXferHeader.timestamp;
+    int processingTimeInMs = (systemTime()/1000000L - iAudioFirstFrameTs) - data.iXferHeader.timestamp;
     if (processingTimeInMs >= VIEW_FINDER_FREEZE_DETECTION_TOLERANCE && mFrameRate >= 10.0) {
         LOGW("Frame %p takes too long (%d ms) to process, staring at %d", data.iFrameBuffer.get(), processingTimeInMs, iAudioFirstFrameTs);
     }
@@ -588,6 +596,60 @@ PVMFStatus AndroidCameraInput::getParametersSync(PvmiMIOSession session,
         }
         params [0].value.key_specific_value = (PVInterface*)&mbufferAlloc;
         status = PVMFSuccess;
+
+        sp<IMemory> Frame = NULL;
+        size_t alignedSize;
+        if( mCamera != NULL) {
+            mCamera->getBufferInfo(Frame, &alignedSize);
+        } else {
+            LOGE(" getParametersSync : mCamera Handle is NULL ");
+        }
+        if( Frame != NULL ) {
+            ssize_t offset = 0;
+            size_t size = 0;
+            sp<IMemoryHeap> heap = Frame->getMemory(&offset, &size);
+            LOGV("getParametersSync: pmem_fd = %d, base = %p, offset = %ld, " \
+                 " size = %d alignedSize = %d pointer %p Total Size = %d", heap->getHeapID(), heap->base(),
+                  offset, size, alignedSize, Frame->pointer(), heap->getSize());
+
+            mbufferAlloc.setNumBuffers((heap->getSize()/alignedSize));
+            mbufferAlloc.setBufferSize(size);
+        } else {
+            LOGE("getParametersSync : Received NULL info ");
+        }
+    }
+    else if (!pv_mime_strcmp(identifier, PVMF_PMEM_BUFFER_INFO_KEY)) {
+        num_params = PVMF_NUM_PMEM_BUFFER_INFO_PARAMS;
+        status = AllocateKvp(params, (PvmiKeyType)PVMF_PMEM_BUFFER_INFO_KEY, num_params);
+        if (!params )
+        {
+            OSCL_LEAVE(OsclErrNoMemory);
+            return PVMFErrNoMemory;
+        }
+
+        sp<IMemory> Frame = NULL;
+        size_t alignedSize;
+        if( mCamera != NULL) {
+            mCamera->getBufferInfo(Frame, &alignedSize);
+        } else {
+            LOGE(" getParametersSync : mCamera Handle is NULL ");
+        }
+        if( Frame != NULL ) {
+            ssize_t offset = 0;
+            size_t size = 0;
+            sp<IMemoryHeap> heap = Frame->getMemory(&offset, &size);
+            LOGV("getParametersSync: pmem_fd = %d, base = %p, offset = %ld, " \
+                 " size = %d alignedSize = %d pointer %p Total Size = %d", heap->getHeapID(), heap->base(),
+                  offset, size, alignedSize, Frame->pointer(), heap->getSize());
+            params [0].value.int32_value = heap->getSize()/alignedSize; // Num PMem buffers
+            params [1].value.int32_value = heap->getHeapID();           // PMem FD
+            params [2].value.pUint8_value = (uint8*)heap->base();       // PMem buffer base pointer
+            params [3].value.int32_value = alignedSize;                 // Individual buffer size
+
+            status = PVMFSuccess;
+        } else {
+            LOGE("getParametersSync : Received NULL info ");
+        }
     }
 
     return status;
@@ -736,9 +798,6 @@ void AndroidCameraInput::Run()
 
     // dequeue frame buffers and write to peer
     if (NULL != iPeer) {
-        if (iState != STATE_STARTED) {
-            ReleaseQueuedFrames();
-        }
         iFrameQueueMutex.Lock();
         while (!iFrameQueue.empty()) {
             AndroidCameraInputMediaData data = iFrameQueue[0];
@@ -766,7 +825,11 @@ void AndroidCameraInput::Run()
                 //release buffer immediately if write fails
                 mCamera->releaseRecordingFrame(data.iFrameBuffer);
                 iFrameQueue.erase(iFrameQueue.begin());
-                iWriteState = EWriteBusy;
+                if(error == OsclErrBusy)
+                {
+                    LOGE(" AndroidCameraInput::Run Set Write state to BUSY \n");
+                    iWriteState = EWriteBusy;
+                }
                 break;
             }
         }
@@ -991,11 +1054,10 @@ PVMFStatus AndroidCameraInput::DoPause()
 // Does this work for reset?
 PVMFStatus AndroidCameraInput::DoReset()
 {
-    LOGD("DoReset: E");
+    LOGV("DoReset");
     // Remove and destroy the clock state observer
     RemoveDestroyClockObs();
     iDataEventCounter = 0;
-    iAudioLossDuration = 0;
     iWriteState = EWriteOK;
     if ( (iState == STATE_STARTED) || (iState == STATE_PAUSED) ) {
     if (mCamera != NULL) {
@@ -1011,7 +1073,6 @@ PVMFStatus AndroidCameraInput::DoReset()
     }
     Cancel();
     iState = STATE_IDLE;
-    LOGD("DoReset: X");
     return PVMFSuccess;
 }
 
@@ -1028,7 +1089,7 @@ PVMFStatus AndroidCameraInput::DoFlush(const AndroidCameraInputCmd& aCmd)
 
 PVMFStatus AndroidCameraInput::DoStop(const AndroidCameraInputCmd& aCmd)
 {
-    LOGD("DoStop: E");
+    LOGV("DoStop");
 
     // Remove and destroy the clock state observer
     RemoveDestroyClockObs();
@@ -1036,12 +1097,16 @@ PVMFStatus AndroidCameraInput::DoStop(const AndroidCameraInputCmd& aCmd)
     iDataEventCounter = 0;
     iWriteState = EWriteOK;
     if (mCamera != NULL) {
-        mCamera->setListener(NULL);
-        mCamera->stopRecording();
-        ReleaseQueuedFrames();
+    mCamera->setListener(NULL);
+    mCamera->stopRecording();
+    ReleaseQueuedFrames();
+    if(pPmemInfo)
+    {
+        delete pPmemInfo;
+        pPmemInfo = NULL;
+    }
     }
     iState = STATE_STOPPED;
-    LOGD("DoStop: X");
     return PVMFSuccess;
 }
 
@@ -1117,6 +1182,8 @@ PVMFStatus AndroidCameraInput::VerifyAndSetParameter(PvmiKvp* aKvp,
         iAuthorClock = (PVMFMediaClock*)aKvp->value.key_specific_value;
         return PVMFSuccess;
     }
+	else if (pv_mime_strcmp(aKvp->key, PVMF_MEDIA_INPUT_NODE_CAP_CONFIG_INTERFACE_KEY) == 0)
+	    return PVMFSuccess;		
 
     LOGE("Unsupported parameter(%s)", aKvp->key);
     return PVMFFailure;
@@ -1190,24 +1257,13 @@ PVMFStatus AndroidCameraInput::postWriteAsync(nsecs_t timestamp, const sp<IMemor
     if (iAudioFirstFrameTs == 0)
         iAudioFirstFrameTs = ts;
 
-    iAudioLossMutex.Lock();
-    if (ts < iAudioFirstFrameTs + iAudioLossDuration) {
+    if (ts < iAudioFirstFrameTs) {
         // Drop the frame
-        iAudioLossMutex.Unlock();
         mCamera->releaseRecordingFrame(frame);
         return PVMFSuccess;
     } else {
-         // calculate timestamp as offset from start time plus lost audio
-         ts -= (iAudioFirstFrameTs + iAudioLossDuration);
-    }
-    iAudioLossMutex.Unlock();
-
-    // Determine how much video to drop so when we resync to the audio
-    // time we don't go into old video (we need increasing timestamps)
-    if (ts <= iTimeStamp) {
-        LOGD("Dropping video frame to catch up for audio ts %lu, dropUntil %lu", ts, iTimeStamp);
-        mCamera->releaseRecordingFrame(frame);
-        return PVMFSuccess;
+         // calculate timestamp as offset from start time
+         ts -= iAudioFirstFrameTs;
     }
 
     // Make sure that no two samples have the same timestamp
@@ -1232,11 +1288,7 @@ PVMFStatus AndroidCameraInput::postWriteAsync(nsecs_t timestamp, const sp<IMemor
     data.iXferHeader.flags = 0;
     data.iXferHeader.duration = 0;
     data.iXferHeader.stream_id = 0;
-    data.iFrameSize = size;
-    data.iFrameBuffer = frame;
 
-    // lock muteddx and queue frame buffer
-    iFrameQueueMutex.Lock();
     {//compose private data
         //could size be zero?
         if(NULL == pPmemInfo)
@@ -1247,7 +1299,6 @@ PVMFStatus AndroidCameraInput::postWriteAsync(nsecs_t timestamp, const sp<IMemor
             if(NULL == pPmemInfo)
             {
                 LOGE("Failed to allocate the camera pmem info buffer array. iCalculateNoOfCameraPreviewBuffer %d",iCalculateNoOfCameraPreviewBuffer);
-                iFrameQueueMutex.Unlock();
                 return PVMFFailure;
             }
         }
@@ -1259,20 +1310,19 @@ PVMFStatus AndroidCameraInput::postWriteAsync(nsecs_t timestamp, const sp<IMemor
         LOGV("struct size %d, pmem_info - %x, &pmem_info[iIndex] - %x, iIndex =%d, pmem_info.pmem_fd = %d, pmem_info.offset = %d", sizeof(CAMERA_PMEM_INFO), pPmemInfo, &pPmemInfo[iIndex], iIndex, pPmemInfo[iIndex].pmem_fd, pPmemInfo[iIndex].offset );
     }
 
+    data.iFrameBuffer = frame;
+    data.iFrameSize = size;
+
+    // lock mutex and queue frame buffer
+    iFrameQueueMutex.Lock();
     iFrameQueue.push_back(data);
     iFrameQueueMutex.Unlock();
-    RunIfNotReady();
 
-    return PVMFSuccess;
-}
+    // Call RunIfNotReady from threadsafecallback AO
+    OsclAny* P = NULL;
+    iPostCameraFrameAO->ReceiveEvent(P);
 
-// Value is expected to be in ms
-void AndroidCameraInput::setAudioLossDuration(uint32 duration)
-{
-    iAudioLossMutex.Lock();
-    LOGD("Update for lost audio for %lu for existing duration %lu", duration, iAudioLossDuration);
-    iAudioLossDuration += duration;
-    iAudioLossMutex.Unlock();
+    return PVMFSuccess; 
 }
 
 // camera callback interface
@@ -1314,5 +1364,6 @@ void AndroidCameraInput::RemoveDestroyClockObs()
         }
     }
 }
+
 
 

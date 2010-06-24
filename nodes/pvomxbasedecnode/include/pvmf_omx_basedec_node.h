@@ -114,6 +114,10 @@
 #include "media_clock_converter.h"
 #endif
 
+#ifndef PVMF_PMEM_BUFFER_ALLOC_H_INCLUDED
+#include "pvmf_pmem_buffer_alloc.h"
+#endif
+
 #define MAX_NAL_PER_FRAME 100
 
 typedef struct OutputBufCtrlStruct
@@ -497,7 +501,7 @@ class PVMFOMXBaseDecNode
         PVMFStatus HandleProcessingState();
         virtual PVMFStatus HandlePortReEnable() = 0;
 
-        virtual bool InitDecoder(PVMFSharedMediaDataPtr&) = 0;
+        virtual PVMFStatus InitDecoder(PVMFSharedMediaDataPtr&) = 0;
 
         OSCL_IMPORT_REF OsclAny* AllocateKVPKeyArray(int32& aLeaveCode, PvmiKvpValueType aValueType, int32 aNumElements);
         int32 PushKVPKey(OSCL_HeapString<OsclMemAllocator>& aString, PVMFMetadataList* aKeyList)
@@ -556,7 +560,7 @@ class PVMFOMXBaseDecNode
         bool SendOutputBufferToOMXComponent();
         OSCL_IMPORT_REF bool SendInputBufferToOMXComponent();
 
-        OSCL_IMPORT_REF bool SendConfigBufferToOMXComponent(uint8 *initbuffer, uint32 initbufsize);
+        OSCL_IMPORT_REF PVMFStatus SendConfigBufferToOMXComponent(uint8 *initbuffer, uint32 initbufsize);
         bool SendEOSBufferToOMXComponent();
 
         bool HandleRepositioning(void);
@@ -610,6 +614,8 @@ class PVMFOMXBaseDecNode
 
         // Size of output buffer (negotiated with component)
         uint32 iOMXComponentOutputBufferSize;
+
+        uint32 iMsPerFrame;
 
         // size of output to allocate (OMX_ALLOCATE_BUFFER =  size of buf header )
         // (OMX_USE_BUFFER = size of buf header + iOMXCoponentOutputBufferSize)
@@ -776,6 +782,9 @@ class PVMFOMXBaseDecNode
         // Time stamp to be used on output buffer
         uint32 iOutTimeStamp;
 
+        // PMEM fd for the output buffer
+        int32  pmem_fd;
+
         // Node configuration update
         PVMFOMXBaseDecNodeConfig iNodeConfig;
 
@@ -826,7 +835,20 @@ class PVMFOMXBaseDecNode
         OMX_TICKS iOMXTicksTimestamp;
         OSCL_IMPORT_REF OMX_TICKS ConvertTimestampIntoOMXTicks(const MediaClockConverter &src);
         uint32 ConvertOMXTicksIntoTimestamp(const OMX_TICKS &src);
+
+        // flag to indicate configuration is in progress
+        bool iConfigInProgress;
+        //
+        // Duration to be used on output buffer
+        // Maintain a vector to store the sample duration.
+        Oscl_Vector<uint32, OsclMemAllocator> iSampleDurationVec;
+        // Also store the timestamp in a vector. This will help us to
+        // validate if the input sample was properly decoded.
+        Oscl_Vector<uint32, OsclMemAllocator> iTimestampVec;
         OMX_BOOL bHWAccelerated;
+
+        // PMEM Allocator usage
+        PVMFPMemBufferAlloc * ipPMemBufferAlloc;
 };
 
 

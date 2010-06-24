@@ -1,6 +1,7 @@
 /*
  * Copyright (C) 2008, The Android Open Source Project
  * Copyright (C) 2008 HTC Inc.
+ * Copyright (c) 2010, Code Aurora Forum. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -53,6 +54,9 @@
 #endif
 #ifndef PVMF_MEDIA_CLOCK_H_INCLUDED
 #include "pvmf_media_clock.h"
+#endif
+#ifndef ANDROID_CAMERA_INPUT_THREADSAFE_CALLBACK_H_INCLUDED
+#include "android_camera_input_threadsafe_callbacks.h"
 #endif
 
 #ifdef HIDE_MIO_SYMBOLS
@@ -270,9 +274,19 @@ class PVRefBufferAlloc: public PVInterface, public PVMFFixedSizeBufferAlloc
             return bufferSize;
         }
 
+        void setBufferSize(uint32 bufSize)
+        {
+            bufferSize = bufSize;
+        }
+
         virtual uint32 getNumBuffers()
         {
             return maxBuffers;
+        }
+
+        void setNumBuffers(uint32 numBuffers)
+        {
+            maxBuffers = numBuffers;
         }
 
     private:
@@ -410,7 +424,6 @@ public:
 
     // add for Camcorder
     PVMFStatus              postWriteAsync(nsecs_t timestamp, const sp<IMemory>& frame);
-    void setAudioLossDuration(uint32 duration);
 
     bool isRecorderStarting() { return iState==STATE_STARTED?true:false; }
 
@@ -461,6 +474,9 @@ private:
      * @return PVMFSuccess if parameter is supported, else PVMFFailure
      */
     PVMFStatus VerifyAndSetParameter(PvmiKvp* aKvp, bool aSetParam=false);
+
+    //request active object which the camera input thread uses to schedule this timer object to run
+    AndroidCameraInputThreadSafeCallbackAO *iPostCameraFrameAO;
 
     void RemoveDestroyClockObs();
 
@@ -532,8 +548,6 @@ private:
     PVMFMediaClockNotificationsInterface *iClockNotificationsInf;
 
     uint32 iAudioFirstFrameTs;
-    OsclMutex iAudioLossMutex;
-    uint32 iAudioLossDuration;
     PVRefBufferAlloc    mbufferAlloc;
 
     // data structures for tunneling buffers

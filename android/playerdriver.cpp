@@ -15,9 +15,10 @@
 ** limitations under the License.
 */
 
-//#define LOG_NDEBUG 0
+#define LOG_NDEBUG 0
 #define LOG_TAG "PlayerDriver"
 #include <utils/Log.h>
+#include <cutils/properties.h>
 
 #include <sys/prctl.h>
 #include <sys/resource.h>
@@ -62,6 +63,7 @@
 #include "pvmf_duration_infomessage.h"
 #include "android_surface_output.h"
 #include "android_audio_output.h"
+#include "android_audio_lpadecode.h"
 #include "android_audio_stream.h"
 #include "pv_media_output_node_factory.h"
 #include "pvmf_format_type.h"  // for PVMFFormatType
@@ -70,6 +72,8 @@
 #include "pvmf_download_data_source.h"
 #include "OMX_Core.h"
 #include "pv_omxcore.h"
+
+#include "pv_mime_string_utils.h" // for strcmp
 
 // color converter
 #include "cczoomrotation16.h"
@@ -314,6 +318,13 @@ class PlayerDriver :
 
     // video display surface
     android::sp<android::ISurface> mSurface;
+
+    //Statistics
+    void SeekPosition(PVPPlaybackPosition seekpvpppos);
+    void PausePosition();
+    bool                    mStatistics;
+    nsecs_t                 iFFLS; //First Frame Latency start
+    bool                    mIsPausing;
 };
 
 PlayerDriver::PlayerDriver(PVPlayer* pvPlayer) :
@@ -330,7 +341,8 @@ PlayerDriver::PlayerDriver(PVPlayer* pvPlayer) :
         mIsLiveStreaming(false),
         mEmulation(false),
         mContentLengthKnown(false),
-        mLastBufferingLog(0)
+        mLastBufferingLog(0),
+        mIsPausing(false)
 {
     LOGV("constructor");
     mSyncSem = new OsclSemaphore();
@@ -370,6 +382,13 @@ PlayerDriver::PlayerDriver(PVPlayer* pvPlayer) :
 
     // mSyncSem will be signaled when the scheduler has started
     mSyncSem->Wait();
+
+    // Statistics profiling
+    mStatistics = false;
+    property_get("persist.debug.pv.statistics", value, "0");
+    if(atoi(value)) mStatistics = true;
+
+    if(mStatistics) iFFLS = systemTime(SYSTEM_TIME_MONOTONIC);
 }
 
 PlayerDriver::~PlayerDriver()
@@ -795,6 +814,7 @@ void PlayerDriver::handleSetVideoSurface(PlayerSetVideoSurface* command)
             return;
         }
         mVideoOutputMIO = mio;
+        if(mStatistics) mVideoOutputMIO->iFirstFrameLatencyStart = iFFLS;
 
         mVideoNode = PVMediaOutputNodeFactory::CreateMediaOutputNode(mVideoOutputMIO);
         mVideoSink = new PVPlayerDataSinkPVMFNode;
@@ -818,9 +838,73 @@ void PlayerDriver::handleSetVideoSurface(PlayerSetVideoSurface* command)
 void PlayerDriver::handleSetAudioSink(PlayerSetAudioSink* command)
 {
     int error = 0;
+
+    // 1. To determine if there ia a support for compressed MIO
+    PVMFFormatType iFormatType;
+    bool           bIsAudioLPADecode = false;
+
     if (command->audioSink()->realtime()) {
         LOGV("Create realtime output");
-        mAudioOutputMIO = new AndroidAudioOutput();
+
+#ifdef SURF7x30
+
+        char value[128];
+
+        property_get("lpa.decode",value,"0");
+        if(strcmp("true",value) == 0)
+        {
+            if (mPlayer->GetDataSourceFormatSync(iFormatType) == PVMFSuccess)
+            {
+                LOGE("FormatType that is returned is %s", iFormatType.getMIMEStrPtr());
+                if (iFormatType != NULL)
+                {
+                    if ( (pv_mime_strcmp(iFormatType.getMIMEStrPtr(), PVMF_MIME_MP3FF) >= 0) ||
+                         (pv_mime_strcmp(iFormatType.getMIMEStrPtr(), PVMF_MIME_MP3) >= 0) )
+                    {
+                        LOGE("Creating LPA decode mode playback - format %s", iFormatType.getMIMEStrPtr());
+                        mAudioOutputMIO = new AndroidAudioLPADecode(); // Need to create custom MIO
+
+                        if (mAudioOutputMIO && (PVMFSuccess == mAudioOutputMIO->initCheck()))
+                        {
+                            uint32   nDuration = 0;
+                            // Check for the duration of the . If it is only greater than 1 second enable LPA decode
+                            if (mPlayer->GetSourceDurationSync(nDuration) == PVMFSuccess)
+                            {
+                                LOGE("Duration that is retuned is %d sec", (nDuration / 1000));
+                                // Only if the duration is greater than 1 second enable lpa decode.
+                                if (nDuration > 60000)
+                                {
+                                    LOGE("LPA decode mode success");
+                                    bIsAudioLPADecode = true;
+                                }
+                            }
+
+                            if (!bIsAudioLPADecode)
+                            {
+                              LOGE("LPA decode mode not supported duration %d sec", (nDuration / 1000));
+                              delete mAudioOutputMIO;
+                              mAudioOutputMIO = NULL;
+                            }
+                        }
+                        else
+                        {
+                           LOGE("LPA decode mode failed");
+                           if (mAudioOutputMIO)
+                           {
+                              delete mAudioOutputMIO;
+                              mAudioOutputMIO = NULL;
+                           }
+                        }
+                    }
+                }
+            }
+        }
+ #endif
+        if (!bIsAudioLPADecode)
+        {
+            LOGE("Creating Non-Tunnel mode playback - uncompressed MIO");
+            mAudioOutputMIO = new AndroidAudioOutput();
+        }
     } else {
         LOGV("Create stream output");
         mAudioOutputMIO = new AndroidAudioStream();
@@ -889,7 +973,7 @@ void PlayerDriver::handleStart(PlayerStart* command)
     // if we are paused, just resume
     PVPlayerState state;
     if (mPlayer->GetPVPlayerStateSync(state) == PVMFSuccess
-        && (state == PVP_STATE_PAUSED)) {
+        && (state == PVP_STATE_PAUSED || mIsPausing)) {
         if (mEndOfData) {
             // if we are at the end, seek to the beginning first
             mEndOfData = false;
@@ -901,8 +985,10 @@ void PlayerDriver::handleStart(PlayerStart* command)
             end.iIndeterminate = true;
             mPlayer->SetPlaybackRange(begin, end, false, NULL);
         }
+
         OSCL_TRY(error, mPlayer->Resume(command));
         OSCL_FIRST_CATCH_ANY(error, commandFailed(command));
+        mIsPausing = false;
     } else {
         OSCL_TRY(error, mPlayer->Start(command));
         OSCL_FIRST_CATCH_ANY(error, commandFailed(command));
@@ -919,7 +1005,7 @@ void PlayerDriver::handleSeek(PlayerSeek* command)
     // Seeking in the pause state
     PVPlayerState state;
     if (mPlayer->GetPVPlayerStateSync(state) == PVMFSuccess
-        && (state == PVP_STATE_PAUSED)) {
+        && (state == PVP_STATE_PAUSED || mIsPausing)) {
         mSeekComp = false;
     }
     PVPPlaybackPosition begin, end;
@@ -929,6 +1015,7 @@ void PlayerDriver::handleSeek(PlayerSeek* command)
     begin.iMode = PVPPBPOS_MODE_NOW;
     end.iIndeterminate = true;
     mSeekPending = true;
+    if(mStatistics) PlayerDriver::SeekPosition(begin);
     OSCL_TRY(error, mPlayer->SetPlaybackRange(begin, end, false, command));
     OSCL_FIRST_CATCH_ANY(error, commandFailed(command));
 
@@ -1021,6 +1108,7 @@ void PlayerDriver::handlePause(PlayerPause* command)
     int error = 0;
     OSCL_TRY(error, mPlayer->Pause(command));
     OSCL_FIRST_CATCH_ANY(error, commandFailed(command));
+    if(mStatistics) PlayerDriver::PausePosition();
 }
 
 void PlayerDriver::handleRemoveDataSource(PlayerRemoveDataSource* command)
@@ -1151,7 +1239,7 @@ int PlayerDriver::playerThread()
 
     OMX_MasterDeinit();
     UninitializeForThread();
-    return 0;
+    return error;
 }
 
 /*static*/ void PlayerDriver::syncCompletion(status_t s, void *cookie, bool cancelled)
@@ -1235,6 +1323,16 @@ void PlayerDriver::CommandCompleted(const PVCmdResponse& aResponse)
             case PlayerCommand::PLAYER_PREPARE:
                 LOGV("PLAYER_PREPARE complete mDownloadContextData=%p, mDataReadyReceived=%d", mDownloadContextData, mDataReadyReceived);
                 mPrepareDone = true;
+
+                // If the seek is issued from the prepare state (this is unique interms of bootup time
+                // Put the source node to pause state (This is to handle TCXO shutdown for hardware decoders).
+                // This state transition should be only handled for audio
+                if (!mVideoOutputMIO) {
+                    LOGV("Player is in prepared state, hence put the player to Pause state");
+                    mPlayer->Pause(NULL);
+                    mIsPausing = true;
+                }
+
                 // If we are streaming from the network, we
                 // have to wait until the first PVMFInfoDataReady
                 // is sent to notify the user that it is okay to
@@ -1316,6 +1414,7 @@ void PlayerDriver::HandleInformationalEvent(const PVAsyncInformationalEvent& aEv
 
     switch (status) {
         case PVMFInfoEndOfData:
+
             mEndOfData = true;
             if (mIsLooping) {
                 mDoLoop = true;
@@ -1417,8 +1516,9 @@ void PlayerDriver::HandleInformationalEvent(const PVAsyncInformationalEvent& aEv
             // there is any bug associated with it; Meanwhile, lets treat this as an error
             // since after playerdriver receives this event, playback session cannot be
             // recovered.
-            mPvPlayer->sendEvent(MEDIA_ERROR, ::android::MEDIA_ERROR_UNKNOWN,
-                                 PVMFInfoContentTruncated);
+            if(mDataSource->GetDataSourceFormatType() != PVMF_MIME_FORMAT_UNKNOWN)
+                mPvPlayer->sendEvent(MEDIA_ERROR, ::android::MEDIA_ERROR_UNKNOWN,
+                                     PVMFInfoContentTruncated);
             break;
 
         case PVMFInfoContentLength:
@@ -1707,7 +1807,11 @@ bool PVPlayer::isPlaying()
 
 status_t PVPlayer::getCurrentPosition(int *msec)
 {
-    return mPlayerDriver->enqueueCommand(new PlayerGetPosition(msec,0,0));
+    status_t ret = mPlayerDriver->enqueueCommand(new PlayerGetPosition(msec,0,0));
+    if (mDuration > 0 && *msec > mDuration) {
+        *msec = mDuration;
+    }
+    return ret;
 }
 
 status_t PVPlayer::getDuration(int *msec)
@@ -1815,3 +1919,20 @@ status_t PVPlayer::getMetadata(const media::Metadata::Filter& ids,
 }
 
 } // namespace android
+
+void PlayerDriver::SeekPosition(PVPPlaybackPosition seekpvpppos)
+{
+    LOGE("=====================================");
+    LOGE("PlayerDriver: Seek position = %d", seekpvpppos.iPosValue.millisec_value);
+    LOGE("=====================================");
+}
+
+void PlayerDriver::PausePosition()
+{
+    PVPPlaybackPosition profiling;
+    profiling.iPosUnit = PVPPBPOSUNIT_MILLISEC;
+    mPlayer->GetCurrentPositionSync(profiling);
+    LOGE("========================================");
+    LOGE("PlayerDriver Pause position = %d", profiling.iPosValue.millisec_value);
+    LOGE("========================================");
+}

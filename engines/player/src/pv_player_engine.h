@@ -383,6 +383,8 @@ typedef enum
     PVP_ENGINE_COMMAND_CAPCONFIG_GET_PARAMETERS_OOTSYNC,
     PVP_ENGINE_COMMAND_CAPCONFIG_RELEASE_PARAMETERS_OOTSYNC,
     PVP_ENGINE_COMMAND_CAPCONFIG_VERIFY_PARAMETERS_OOTSYNC,
+    PVP_ENGINE_COMMAND_GET_DATASOURCE_FORMAT,
+    PVP_ENGINE_COMMAND_GET_SOURCE_DURATION,
     // Internal engine commands
     PVP_ENGINE_COMMAND_PAUSE_DUE_TO_ENDTIME_REACHED,
     PVP_ENGINE_COMMAND_PAUSE_DUE_TO_ENDOFCLIP,
@@ -509,6 +511,10 @@ class PVPlayerEngineCommandCompareLess
                 case PVP_ENGINE_COMMAND_ACQUIRE_LICENSE_WCHAR:
                     return 5;
                 case PVP_ENGINE_COMMAND_ACQUIRE_LICENSE_CHAR:
+                    return 5;
+                case PVP_ENGINE_COMMAND_GET_DATASOURCE_FORMAT:
+                    return 5;
+                case PVP_ENGINE_COMMAND_GET_SOURCE_DURATION:
                     return 5;
                 case PVP_ENGINE_COMMAND_CANCEL_ACQUIRE_LICENSE:
                     return 3;
@@ -909,6 +915,8 @@ class PVPlayerEngine : public OsclTimerObject,
         PVCommandId CancelCommand(PVCommandId aCancelCmdId, const OsclAny* aContextData = NULL);
         PVCommandId CancelAllCommands(const OsclAny* aContextData = NULL);
         PVCommandId GetPVPlayerState(PVPlayerState& aState, const OsclAny* aContextData = NULL);
+        PVMFStatus GetDataSourceFormatSync(PVMFFormatType& inputformat, const OsclAny* aContextData = NULL);
+        PVMFStatus GetSourceDurationSync(uint32& aDuration, const OsclAny* aContextData = NULL);
         PVMFStatus GetPVPlayerStateSync(PVPlayerState& aState);
         PVCommandId AddDataSource(PVPlayerDataSource& aDataSource, const OsclAny* aContextData = NULL);
         PVCommandId Init(const OsclAny* aContextData = NULL);
@@ -1092,6 +1100,8 @@ class PVPlayerEngine : public OsclTimerObject,
         PVMFStatus DoQueryUUID(PVPlayerEngineCommand& aCmd);
         PVMFStatus DoQueryInterface(PVPlayerEngineCommand& aCmd);
         PVMFStatus DoGetPVPlayerState(PVPlayerEngineCommand& aCmd, bool aSyncCmd = false);
+        PVMFStatus DoGetDataSourceFormat(PVPlayerEngineCommand& aCmd, bool aSyncCmd = true);
+        PVMFStatus DoGetSourceDuration(PVPlayerEngineCommand& aCmd, bool aSyncCmd = true);
         PVMFStatus DoAddDataSource(PVPlayerEngineCommand& aCmd);
         PVMFStatus DoQuerySourceFormatType(PVCommandId aCmdId, OsclAny* aCmdContext);
         PVMFStatus DoSetupSourceNode(PVCommandId aCmdId, OsclAny* aCmdContext);

@@ -46,6 +46,9 @@
 #ifndef ANDROID_AUDIO_OUTPUT_THREADSAFE_CALLBACK_AO_H_INCLUDED
 #include "android_audio_output_threadsafe_callbacks.h"
 #endif
+#ifndef ANDROID_AUDIO_LPADECODE_THREADSAFE_CALLBACK_AO_H_INCLUDED
+#include "android_audio_lpadecode_threadsafe_callbacks.h"
+#endif
 #ifndef PVMF_MEDIA_CLOCK_H_INCLUDED
 #include "pvmf_media_clock.h"
 #endif
@@ -269,6 +272,11 @@ public:
     virtual void writeAudioBuffer(uint8* aData, uint32 aDataLen, PVMFCommandId cmdId,
             OsclAny* aContext, PVMFTimestamp aTimestamp) {}
 
+    virtual void writeAudioLPABuffer(uint8* aData, uint32 aDataLen, PVMFCommandId cmdId,
+            OsclAny* aContext, PVMFTimestamp aTimestamp, int32 pmem_fd) {}
+
+    virtual int initCheck() {return PVMFSuccess;}
+
 protected:
     // From OsclTimerObject
     void Run();
@@ -284,7 +292,7 @@ protected:
     void ResetData();
 
     // request active object which the audio output thread uses to schedule this timer object to run
-    AndroidAudioOutputThreadSafeCallbackAO *iWriteCompleteAO;
+    ThreadSafeCallbackAO *iWriteCompleteAO;
 
     // write response queue, needs to use lock mechanism to access
     Oscl_Vector<WriteResponse,OsclMemAllocator> iWriteResponseQueue;
@@ -346,6 +354,7 @@ protected:
 
     bool iFlushPending;
     uint32 iDataQueued;
+    bool bIsAudioLPADecode;
 
     sp<MediaPlayerInterface::AudioSink>   mAudioSink;
 };

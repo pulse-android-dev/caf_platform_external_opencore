@@ -1,5 +1,6 @@
 /* ------------------------------------------------------------------
  * Copyright (C) 1998-2009 PacketVideo
+ * Copyright (c) 2009, Code Aurora Forum. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -522,14 +523,6 @@ void PVAuthorEngine::HandleNodeInformationalEvent(const PVMFAsyncEvent& aEvent)
             PushCmdInFront(cmd);
         }
         break;
-
-        case PVMFInfoOverflow:
-        {
-            PVAsyncInformationalEvent event(aEvent.GetEventType(), NULL, aEvent.GetEventExtensionInterface());
-            iInfoEventObserver->HandleInformationalEvent(event);
-        }
-        break;
-
         case PVMF_COMPOSER_FILESIZE_PROGRESS:
         case PVMF_COMPOSER_DURATION_PROGRESS:
         {
@@ -794,10 +787,17 @@ void PVAuthorEngine::Run()
             status = DoStop(cmd);
             break;
         case PVAE_CMD_STOP_MAX_SIZE:
-        case PVAE_CMD_STOP_MAX_DURATION:
-        case PVAE_CMD_STOP_EOS_REACHED:
+            LOG_ERR((0, "PVAuthorEngine::Run MAX_SIZE reached, stopping record" ));
             status = DoStopMaxSizeDuration();
-            break;
+          break;
+        case PVAE_CMD_STOP_MAX_DURATION:
+            LOG_ERR((0, "PVAuthorEngine::Run MAX_DURATION reached, stopping record"));
+            status = DoStopMaxSizeDuration();
+          break;
+        case PVAE_CMD_STOP_EOS_REACHED:
+            LOG_ERR((0, "PVAuthorEngine::Run EOS reached, stopping record"));
+            status = DoStopMaxSizeDuration();
+          break;
         case PVAE_CMD_CAPCONFIG_SET_PARAMETERS:
             status = DoCapConfigSetParameters(cmd, false);
             break;
@@ -1123,6 +1123,13 @@ PVMFStatus PVAuthorEngine::DoSelectComposer(PVEngineCommand& aCmd)
     return PVMFPending;
 }
 
+// Voicemoe - Function to compare mime types
+static bool CompareMimeTypes(const PvmfMimeString& a, const PvmfMimeString& b)
+{
+    return (oscl_strncmp(a.get_cstr(), b.get_cstr(), oscl_strlen(a.get_cstr())) == 0);
+}
+
+
 ////////////////////////////////////////////////////////////////////////////
 PVMFStatus PVAuthorEngine::DoAddMediaTrack(PVEngineCommand& aCmd)
 {
@@ -1163,7 +1170,7 @@ PVMFStatus PVAuthorEngine::DoAddMediaTrack(PVEngineCommand& aCmd)
     }
 
     bool compressedDataSrc = false;
-    if (IsCompressedFormatDataSource(inputNodeContainer, compressedDataSrc) != PVMFSuccess)
+    if (IsCompressedFormatDataSource(inputNodeContainer, compressedDataSrc, compressedFormatMimeType) != PVMFSuccess)
     {
         LOG_ERR((0, "PVAuthorEngine::DoAddMediaTrack: Error - IsCompressedFormatDataSource() failed"));
         return PVMFFailure;
@@ -1176,6 +1183,21 @@ PVMFStatus PVAuthorEngine::DoAddMediaTrack(PVEngineCommand& aCmd)
                          LOG_ERR((0, "PVAuthorEngine::DoAddMediaTrack: Error - iDataSourceNodes.push_back failed"));
                          return PVMFFailure;
                         );
+    // 1. If Compressed input and following types - configure tunnel encode
+     if ( compressedDataSrc &&
+         ((aCmd.GetMimeType() == KAmrNbEncMimeType) ||
+          (aCmd.GetMimeType() == kEVRCEncMimeType) ||
+          (aCmd.GetMimeType() == kQCELPEncMimeType) ||
+          (aCmd.GetMimeType() == KAACMP4EncMimeType)))
+    {
+
+      //  2.1 Setting up the MIO node to ensure that the right format is sent
+      LOG_DEBUG((0, "PVAuthorEngine::DoAddMediaTrack: Setting up Compressed Encode graph"));
+    }
+    else
+    {
+      compressedDataSrc = false;
+    }
 
     if (compressedDataSrc)
     {
@@ -1322,10 +1344,13 @@ PVMFStatus PVAuthorEngine::DoInit(PVEngineCommand& aCmd)
         return PVMFFailure;
     }
 
+    // Prepare the source node first, to make sure the camera preview started and
+    // HAL allocates PMEM buffers
+    iNodeUtil.Prepare(iDataSourceNodes);
+
     iNodeUtil.Prepare(iComposerNodes);
     if (iEncoderNodes.size() > 0)
         iNodeUtil.Prepare(iEncoderNodes);
-    iNodeUtil.Prepare(iDataSourceNodes);
     PVUuid iUuid1 = PVMI_CAPABILITY_AND_CONFIG_PVUUID;
 
     for (uint ii = 0; ii < iEncoderNodes.size(); ii++)
@@ -1477,8 +1502,6 @@ PVMFStatus PVAuthorEngine::DoStop(PVEngineCommand& aCmd)
 
     switch (GetPVAEState())
     {
-        case PVAE_STATE_INITIALIZED:
-            return PVMFSuccess;
         case PVAE_STATE_RECORDING:
         case PVAE_STATE_PAUSED:
             iAuthorClock.Stop();
@@ -1631,7 +1654,7 @@ PVAENodeContainer* PVAuthorEngine::GetNodeContainer(PVAENodeContainerVector& aNo
 }
 
 ////////////////////////////////////////////////////////////////////////////
-PVMFStatus PVAuthorEngine::IsCompressedFormatDataSource(PVAENodeContainer* aDataSrc, bool& aIsCompressedFormat)
+PVMFStatus PVAuthorEngine::IsCompressedFormatDataSource(PVAENodeContainer* aDataSrc, bool& aIsCompressedFormat,PvmfMimeString& aMimeType)
 {
     LOG_STACK_TRACE((0, "PVAuthorEngine::IsCompressedFormatDataSource"));
 
@@ -1646,11 +1669,14 @@ PVMFStatus PVAuthorEngine::IsCompressedFormatDataSource(PVAENodeContainer* aData
     for (uint32 i = 0; i < capability.iOutputFormatCapability.size(); i++)
     {
         PVMFFormatType format = (capability.iOutputFormatCapability[i]);
-        if (format.isCompressed() || format.isText())
-        {
-            aIsCompressedFormat = true;
-            return PVMFSuccess;
-        }
+	 if (aMimeType == format.getMIMEStrPtr())
+	 {
+	        if (format.isCompressed() || format.isText())
+		{
+			aIsCompressedFormat = true;
+			return PVMFSuccess;
+		}
+         }
     }
 
     return PVMFSuccess;
@@ -1728,6 +1754,15 @@ PVMFStatus PVAuthorEngine::GetPvmfFormatString(PvmfMimeString& aMimeType, const 
     else if (aNodeMimeType == KAMRWbEncMimeType)
     {
         aMimeType = PVMF_MIME_AMRWB_IETF;
+    }
+    // Added support for EVRC and QCELP mime types
+    else if (aNodeMimeType == kEVRCEncMimeType)
+    {
+      aMimeType = PVMF_MIME_EVRC;
+    }
+    else if (aNodeMimeType == kQCELPEncMimeType)
+    {
+      aMimeType = PVMF_MIME_QCELP;
     }
     else if (aNodeMimeType == KAACADIFEncMimeType ||
              aNodeMimeType == KAACADIFComposerMimeType)

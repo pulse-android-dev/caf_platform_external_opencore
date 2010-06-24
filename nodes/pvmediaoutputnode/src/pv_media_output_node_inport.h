@@ -328,6 +328,25 @@ class PVMediaOutputNodePort : public OsclTimerObject
         PVLogger* iDatapathLoggerOut;
         PVLogger* iReposLogger;
 
+        //First frame and seek latency profiling
+        void SeekProfilingStart();
+        void SeekProfilingEnd();
+        bool mStatistics;
+        bool iLatencyProfiling;
+        int32 iStartMilliSecProfiling;
+        int32 iEndMilliSecProfiling;
+
+        uint32 maxEarlyDelta;
+        uint32 maxLateDelta;
+        uint32 numTimesAVSyncLoss;
+
+        void statsCatchup(uint32 ts, uint32 clock, uint32 delta);
+        void statsLate(uint32 ts, uint32 clock, uint32 delta);
+        void statsOnTime(uint32 ts, uint32 clock, uint32 delta);
+        void statsSyncLoss();
+        uint32 maxTimeSyncLoss;
+        uint32 statsCatchupTimeStart;
+
 };
 
 #endif // PVMI_IO_INTERFACE_NODE_INPORT_H_INCLUDED

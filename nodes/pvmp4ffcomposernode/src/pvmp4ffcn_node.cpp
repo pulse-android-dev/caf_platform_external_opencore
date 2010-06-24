@@ -1,5 +1,6 @@
 /* ------------------------------------------------------------------
  * Copyright (C) 1998-2009 PacketVideo
+ * Copyright (c) 2009, Code Aurora Forum. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,34 +20,6 @@
  * @file pvmp4ffcn_node.cpp
  * @brief Node for PV MPEG4 file format composer
  */
-
-/*
- * FIXME:
- * The current implementation of the file writer is NOT
- * thread-safe.
- *
- * A separate delete queue should be used to
- * pass back the fragments from the file writer thread
- * to the composer node and to let the composer node
- * handle the deallocation of any fragments; otherwise,
- * race condition may occur. Some lost free chunk
- * notification has been found due to this race
- * condition.
- *
- * The reason why there is race condition is that the
- * rest of the OpenCore assumes a single-thread model.
- * In other words, everything is scheduled to
- * run within a single omx thread. A separate file writer
- * thread breaks this model, and deallocate fragments
- * here may cause deallocate() be called within two
- * separate thread, and thus the free chunk available
- * flag can be corrupted.
- *
- * Don't remove the following #undef line unless you
- * fix the above issue.
- */
-#undef ANDROID
-
 #ifdef ANDROID
 // #define LOG_NDEBUG 0
 #define LOG_TAG "PvMp4Composer"
@@ -70,6 +43,7 @@
 #ifndef OSCL_MEM_BASIC_FUNCTIONS_H
 #include "oscl_mem_basic_functions.h"
 #endif
+#include "pvmf_omx_basedec_node.h"  // for NUMBER_OUTPUT_BUFFER
 
 #ifdef ANDROID
 namespace android
@@ -82,29 +56,31 @@ namespace android
 // This class is friend with the composer node it belongs to, in order
 // to be able to call the original AddMemFragToTrack which does all
 // the work.
-
-#define FRAME_QUEUE_DEFAULT_SIZE 20
+//
+// The queue is implemented using a circular buffer. mBuffer is the
+// start of the array and mEnd points just after the last element in
+// the array.
+// mFirst points to the oldest fragment.
+// mLast points to the next available cell for a new fragment.
+// When the array is empty or full mFirst == mLast.
 
 class FragmentWriter: public Thread
 {
     public:
         FragmentWriter(PVMp4FFComposerNode *composer) :
-                Thread(kThreadCallJava), mComposer(composer),
-                mPrevWriteStatus(PVMFSuccess), mTid(NULL), mExitRequested(false)
-        {
-            mQueue.reserve(FRAME_QUEUE_DEFAULT_SIZE);
-        }
+                Thread(kThreadCallJava), mSize(0), mEnd(mBuffer + kCapacity),
+                mFirst(mBuffer), mLast(mBuffer), mComposer(composer),
+                mPrevWriteStatus(PVMFSuccess), mTid(NULL), mDropped(0), mExitRequested(false) {}
 
         virtual ~FragmentWriter()
         {
             Mutex::Autolock l(mRequestMutex);
-
+            LOG_ASSERT(0 == mSize, "The queue should be empty by now.");
             LOG_ASSERT(mExitRequested, "Deleting an active instance.");
-            LOGD_IF(!mQueue.empty(), "Releasing %d fragments in dtor", mQueue.size());
-
-            while (!mQueue.empty())  // make sure we are flushed
+            LOGD_IF(0 < mSize, "Flushing %d frags in dtor", mSize);
+            while (0 < mSize)  // make sure we are flushed
             {
-                releaseQueuedFrame(mQueue.begin());
+                decrPendingRequests();
             }
         }
 
@@ -114,7 +90,6 @@ class FragmentWriter: public Thread
         {
             mExitRequested = true;
             Thread::requestExit();
-
             mRequestMutex.lock();
             mRequestCv.signal();
             mRequestMutex.unlock();
@@ -130,22 +105,13 @@ class FragmentWriter: public Thread
             while (!done)
             {
                 mRequestMutex.lock();
-                done = mQueue.empty();
+                done = mSize == 0 || iter > kMaxFlushAttempts;
                 if (!done) mRequestCv.signal();
                 mRequestMutex.unlock();
-                if (!done) {
-                    usleep(kFlushSleepMicros);
-                    if ((++iter % kMaxFlushAttemptsWarning) == 0) {
-                        if (iter >= kMaxFlushAttemptsCrashing) {
-                            LOGE("Fragment flush takes way too long!");
-                            // Crash media server!
-                            *((char *) 0) = 0x01;
-                        } else {
-                            LOGW("Fragement writer flush takes %d us", iter * kFlushSleepMicros);
-                        }
-                    }
-                }
+                if (!done) usleep(kFlushSleepMicros);
+                ++iter;
             }
+            LOG_ASSERT(iter <= kMaxFlushAttempts, "Failed to flush");
         }
 
         // Called by the ProcessIncomingMsg method from the
@@ -156,28 +122,57 @@ class FragmentWriter: public Thread
                                          OsclRefCounterMemFrag& aMemFrag, PVMFFormatType aFormat,
                                          uint32& aTimestamp, int32 aTrackId, PVMp4FFComposerPort *aPort)
         {
-            if (mExitRequested) {
-                LOGW("Enqueue fragment after exit request!");
-                aFrame.clear();  // Release the frame
-                return PVMFErrCancelled;
+            if (mExitRequested) return PVMFErrCancelled;
+            Mutex::Autolock lock(mRequestMutex);
+
+            // When the queue is full, we drop the request. This frees the
+            // memory fragment and keeps the system running. Decoders are
+            // unhappy when there is no buffer available to write the
+            // output.
+            // An alternative would be to discard the oldest fragment
+            // enqueued to free some space. However that would modify
+            // mFirst and require extra locking because the thread maybe
+            // in the process of writing it.
+            if (mSize == kCapacity)
+            {
+                ++mDropped;
+                LOGW_IF((mDropped % kLogDroppedPeriod) == 0, "Frame %d dropped.", mDropped);
+                // TODO: Should we return an error code here?
+                return mPrevWriteStatus;
             }
 
-            Mutex::Autolock lock(mRequestMutex);
-            Request frame = {aFrame, aMemFrag, aFormat, aTimestamp, aTrackId, aPort};
-            mQueue.push_back(frame);
+            mLast->set(aFrame, aMemFrag, aFormat, aTimestamp, aTrackId, aPort);
+            incrPendingRequests();
+
             mRequestCv.signal();
             return mPrevWriteStatus;
         }
 
     private:
         static const bool kThreadCallJava = false;
+        static const size_t kLogDroppedPeriod = 10;  // Arbitrary.
+        // Must match the number of buffers allocated in the decoder.
+        static const size_t kCapacity = NUMBER_OUTPUT_BUFFER;
+        static const size_t kWarningThreshold = kCapacity * 3 / 4; // Warn at 75%
         static const OsclRefCounterMemFrag kEmptyFrag;
-        static const int kFlushSleepMicros = 200 * 1000;    // 200 ms
-        static const size_t kMaxFlushAttemptsWarning = 10;  // 2 seconds
-        static const size_t kMaxFlushAttemptsCrashing = 30; // 6 seconds
+        // Flush blocks for 2 seconds max.
+        static const size_t kMaxFlushAttempts = 10;
+        static const int kFlushSleepMicros = 200 * 1000;
 
         struct Request
         {
+            void set(Oscl_Vector<OsclMemoryFragment, OsclMemAllocator> aFrame,
+                     OsclRefCounterMemFrag& aMemFrag, PVMFFormatType aFormat,
+                     uint32 aTimestamp, int32 aTrackId, PVMp4FFComposerPort *aPort)
+            {
+                mFrame = aFrame;
+                mFrag = aMemFrag;
+                mFormat = aFormat;
+                mTimestamp = aTimestamp;
+                mTrackId = aTrackId;
+                mPort = aPort;
+            }
+
             Oscl_Vector<OsclMemoryFragment, OsclMemAllocator> mFrame;
             OsclRefCounterMemFrag mFrag;
             PVMFFormatType mFormat;
@@ -186,18 +181,23 @@ class FragmentWriter: public Thread
             PVMp4FFComposerPort *mPort;
         };
 
-        void releaseQueuedFrame(Request *frame)
+        void incrPendingRequests()
         {
-            if (!frame) {
-                LOGE("Frame not valid");
-                return;
-            }
-            frame->mFrame.clear();
+            ++mLast;
+            if (mEnd == mLast) mLast = mBuffer;
+            ++mSize;
+        }
+
+        void decrPendingRequests()
+        {
+            mFirst->mFrame.clear();
             // Release the memory fragment tracked using a refcount
             // class. Need to assign an empty frag to release the memory
             // fragment. We cannot wait for the array to wrap around.
-            frame->mFrag = kEmptyFrag;  // FIXME: This assignement to decr the ref count is ugly.
-            mQueue.erase(frame);
+            mFirst->mFrag = kEmptyFrag;  // FIXME: This assignement to decr the ref count is ugly.
+            ++mFirst;
+            if (mEnd == mFirst) mFirst = mBuffer;
+            --mSize;
         }
 
         // Called by the base class Thread.
@@ -209,38 +209,57 @@ class FragmentWriter: public Thread
 
             LOG_ASSERT(androidGetThreadId() == mTid,
                        "Thread id has changed!: %p != %p", mTid, androidGetThreadId());
-            if (mExitRequested)
-                return false;
 
+            size_t numFrags = 0;
+            // Check if there's work to do. Otherwise wait for new fragment.
             mRequestMutex.lock();
-            if (mQueue.empty())
-                mRequestCv.wait(mRequestMutex);
-
-            if (!mQueue.empty()) {
-                // Hold the lock while writing the fragment
-                Request frame = mQueue[0];  // Make a local copy
-                mPrevWriteStatus = mComposer->AddMemFragToTrack(
-                        frame.mFrame, frame.mFrag, frame.mFormat,
-                        frame.mTimestamp, frame.mTrackId, frame.mPort);
-                if (!mQueue.empty()) {
-                    releaseQueuedFrame(mQueue.begin());
-                }
-            }
+            numFrags = mSize;
             mRequestMutex.unlock();
 
+            bool doneWaiting = numFrags != 0;
+            while (!doneWaiting)
+            {
+                mRequestMutex.lock();
+                mRequestCv.wait(mRequestMutex);
+                doneWaiting = mSize > 0 || mExitRequested;
+                numFrags = mSize;
+                mRequestMutex.unlock();
+            }
+
+            if (mExitRequested) return false;
+
+            LOGW_IF(numFrags > kWarningThreshold, "%d fragments in queue.", numFrags);
+            for (size_t i = 0; i < numFrags; ++i)
+            {
+                // Don't lock the array while we are calling
+                // AddMemFragToTrack, which may last a long time, because
+                // we are the only thread accessing mFirst.
+                mPrevWriteStatus = mComposer->AddMemFragToTrack(
+                                       mFirst->mFrame, mFirst->mFrag, mFirst->mFormat,
+                                       mFirst->mTimestamp, mFirst->mTrackId, mFirst->mPort);
+
+                mRequestMutex.lock();
+                decrPendingRequests();
+                mRequestMutex.unlock();
+            }
             return true;
         }
 
 
-        Mutex mRequestMutex;  // Protects mRequestCv, mQueue
+        Mutex mRequestMutex;  // Protects mRequestCv, mBuffer, mFirst, mLast, mDropped
         Condition mRequestCv;
-        Oscl_Vector<Request, OsclMemAllocator> mQueue;
+        Request mBuffer[kCapacity];
+        size_t mSize;
+        void *const mEnd;  // Marker for the end of the array.
+        Request *mFirst, *mLast;
+
         // mComposer with the real implementation of the AddMemFragToTrack method.
         PVMp4FFComposerNode *mComposer;
         // TODO: lock needed for mPrevWriteStatus? Are int assignement atomic on arm?
         PVMFStatus mPrevWriteStatus;
 
         android_thread_id_t mTid;
+        size_t mDropped;
         // Unlike exitPending(), stays to true once exit has been called.
         bool mExitRequested;
 };
@@ -540,6 +559,8 @@ OSCL_EXPORT_REF PVMFStatus PVMp4FFComposerNode::GetCapability(PVMFNodeCapability
     aNodeCapability.iInputFormatCapability.push_back(PVMF_MIME_H2632000);
     aNodeCapability.iInputFormatCapability.push_back(PVMF_MIME_AMR_IETF);
     aNodeCapability.iInputFormatCapability.push_back(PVMF_MIME_AMRWB_IETF);
+    aNodeCapability.iInputFormatCapability.push_back(PVMF_MIME_QCELP);
+    aNodeCapability.iInputFormatCapability.push_back(PVMF_MIME_EVRC);
     aNodeCapability.iInputFormatCapability.push_back(PVMF_MIME_3GPP_TIMEDTEXT);
     aNodeCapability.iInputFormatCapability.push_back(PVMF_MIME_MPEG4_AUDIO);
     return PVMFSuccess;
@@ -1391,6 +1412,8 @@ void PVMp4FFComposerNode::DoRequestPort(PVMp4FFCNCmd& aCmd)
                 format == PVMF_MIME_H2632000 ||
                 format == PVMF_MIME_AMR_IETF ||
                 format == PVMF_MIME_AMRWB_IETF ||
+                format == PVMF_MIME_QCELP ||
+                format == PVMF_MIME_EVRC ||
                 format == PVMF_MIME_ADIF ||
                 format == PVMF_MIME_ADTS ||
                 format == PVMF_MIME_MPEG4_AUDIO)
@@ -1548,6 +1571,8 @@ void PVMp4FFComposerNode::DoStart(PVMp4FFCNCmd& aCmd)
                 }
                 else if (iInPorts[i]->GetFormat() == PVMF_MIME_AMR_IETF ||
                          iInPorts[i]->GetFormat() == PVMF_MIME_AMRWB_IETF ||
+                         iInPorts[i]->GetFormat() == PVMF_MIME_QCELP ||
+                         iInPorts[i]->GetFormat() == PVMF_MIME_EVRC ||
                          iInPorts[i]->GetFormat() == PVMF_MIME_MPEG4_AUDIO)
                 {
                     iFileType |= FILE_TYPE_AUDIO;
@@ -1734,6 +1759,16 @@ PVMFStatus PVMp4FFComposerNode::AddTrack(PVMp4FFComposerPort *aPort)
     else if (aPort->GetFormat() == PVMF_MIME_AMRWB_IETF)
     {
         codecType = CODEC_TYPE_AMR_WB_AUDIO;
+        mediaType = MEDIA_TYPE_AUDIO;
+    }
+    else if (aPort->GetFormat() == PVMF_MIME_QCELP)
+    {
+        codecType = CODEC_TYPE_QCELP_AUDIO;
+        mediaType = MEDIA_TYPE_AUDIO;
+    }
+    else if (aPort->GetFormat() == PVMF_MIME_EVRC)
+    {
+        codecType = CODEC_TYPE_EVRC_AUDIO;
         mediaType = MEDIA_TYPE_AUDIO;
     }
     else if (aPort->GetFormat() ==  PVMF_MIME_MPEG4_AUDIO)
@@ -2300,6 +2335,7 @@ PVMFStatus PVMp4FFComposerNode::ProcessIncomingMsg(PVMFPortInterface* aPort)
                     }
 
                     //report EOS info to engine
+                    LOG_ERR((0, "PVMp4FFComposerNode::ProcessIncomingMsg EOS Reached"));
                     ReportInfoEvent(PVMF_COMPOSER_EOS_REACHED);
                 }
 
@@ -2372,41 +2408,40 @@ PVMFStatus PVMp4FFComposerNode::ProcessIncomingMsg(PVMFPortInterface* aPort)
             }
 
             Oscl_Vector<OsclMemoryFragment, OsclMemAllocator> pFrame; //vector to store the nals in the particular case of AVC
-            for (uint32 i = 0; (i < numFrags) && status == PVMFSuccess; i++)
-            {
-                if (!mediaDataPtr->getMediaFragment(i, memFrag))
-                {
+                 for (uint32 i = 0; (i < numFrags) && status == PVMFSuccess; i++)
+                 {
+                   if (!mediaDataPtr->getMediaFragment(i, memFrag))
+                   {
                     status = PVMFFailure;
+                   }
+                   else
+                   {
+                       OsclMemoryFragment memfragment;
+                       memfragment.len = memFrag.getMemFragSize();
+                       memfragment.ptr = memFrag.getMemFragPtr();
+                       pFrame.push_back(memfragment);
+                   }
                 }
-                else
-                {
-                    OsclMemoryFragment memfragment;
-                    memfragment.len = memFrag.getMemFragSize();
-                    memfragment.ptr = memFrag.getMemFragPtr();
-                    pFrame.push_back(memfragment);
-                }
-            }
-
 #ifdef ANDROID
-            if (!iMaxReachedEvent)
-            {
-                // TODO: We are passing port and port->GetFormat(), should pass port only.
-                status = iFragmentWriter->enqueueMemFragToTrack(
-                             pFrame, memFrag, port->GetFormat(), timestamp,
-                             trackId, (PVMp4FFComposerPort*)aPort);
-            }
-            else if (!iMaxReachedReported)
-            {
-                iMaxReachedReported = true;
-                ReportInfoEvent(static_cast<PVMFComposerSizeAndDurationEvent>(iMaxReachedEvent), NULL);
-                status = PVMFSuccess;
-            }
+                if (!iMaxReachedEvent)
+                {
+                    // TODO: We are passing port and port->GetFormat(), should pass port only.
+                    status = iFragmentWriter->enqueueMemFragToTrack(
+                                 pFrame, memFrag, port->GetFormat(), timestamp,
+                                 trackId, (PVMp4FFComposerPort*)aPort);
+                }
+                else if (!iMaxReachedReported)
+                {
+                    iMaxReachedReported = true;
+                    ReportInfoEvent(static_cast<PVMFComposerSizeAndDurationEvent>(iMaxReachedEvent), NULL);
+                    status = PVMFSuccess;
+                }
 #else
-            status = AddMemFragToTrack(pFrame, memFrag, port->GetFormat(), timestamp,
-                                       trackId, (PVMp4FFComposerPort*)aPort);
+                status = AddMemFragToTrack(pFrame, memFrag, port->GetFormat(), timestamp,
+                                           trackId, (PVMp4FFComposerPort*)aPort);
 #endif
-            if (status == PVMFFailure)
-                ReportErrorEvent(PVMF_MP4FFCN_ERROR_ADD_SAMPLE_TO_TRACK_FAILED, (OsclAny*)aPort);
+                if (status == PVMFFailure)
+                    ReportErrorEvent(PVMF_MP4FFCN_ERROR_ADD_SAMPLE_TO_TRACK_FAILED, (OsclAny*)aPort);
         }
         break;
 
@@ -2793,8 +2828,260 @@ PVMFStatus PVMp4FFComposerNode::AddMemFragToTrack(Oscl_Vector<OsclMemoryFragment
         }
     }
 
+    else if (aFormat == PVMF_MIME_QCELP)
+    {
+        if (iRealTimeTS)
+        {
+            if (((int32) aTimestamp - (int32) aPort->GetLastTS()) < 20)
+            {
+                aTimestamp = aPort->GetLastTS() + 20;
+            }
+
+            aPort->SetLastTS(aTimestamp);
+        }
+
+        uint32 bytesProcessed = 0;
+        uint32 frameSize = 0;
+        Oscl_Vector<OsclMemoryFragment, OsclMemAllocator> qcelpfrags;
+        for (i = 0; i < aFrame.size(); i++)
+        {
+            bytesProcessed = 0;
+            size = aFrame[i].len;
+            data = OSCL_REINTERPRET_CAST(uint8*, aFrame[i].ptr);
+            // Parse audio data and add one 20ms frame to track at a time
+            while (bytesProcessed < size)
+            {
+                // Check for max duration
+                status = CheckMaxDuration(aTimestamp);
+                if (status == PVMFFailure)
+                {
+                    PVLOGGER_LOGMSG(PVLOGMSG_INST_REL, iLogger, PVLOGMSG_ERR,
+                                    (0, "PVMp4FFComposerNode::AddMemFragToTrack: Error - CheckMaxDuration failed"));
+                    return status;
+                }
+                else if (status == PVMFSuccess)
+                {
+                    PVLOGGER_LOGMSG(PVLOGMSG_INST_REL, iLogger, PVLOGMSG_DEBUG,
+                                    (0, "PVMp4FFComposerNode::AddMemFragToTrack: Maxmimum duration reached"));
+                    return status;
+                }
+
+                // Update clock converter
+                iClockConverter.set_timescale(timeScale);
+                iClockConverter.set_clock_other_timescale(aTimestamp, 1000);
+
+                // Check max file size
+                int32 frSize = GetQCELPFrameSize(data[0]);
+                if (frSize == -1)
+                {
+                    PVLOGGER_LOGMSG(PVLOGMSG_INST_REL, iLogger, PVLOGMSG_ERR,
+                                    (0, "PVMp4FFComposerNode::AddMemFragToTrack: Error - Frame Type Not Supported - Skipping"));
+                    LOGDATATRAFFIC((0, "PVMp4FFComposerNode::AddMemFragToTrack - Invalid Frame: TrackID=%d, Byte=0x%x, Mime=%s",
+                                    aTrackId, data[0], aPort->GetMimeType().get_cstr()));
+                    return PVMFFailure;
+                }
+                frameSize = (uint32)frSize;
+
+                status = CheckMaxFileSize(frameSize);
+                if (status == PVMFFailure)
+                {
+                    PVLOGGER_LOGMSG(PVLOGMSG_INST_REL, iLogger, PVLOGMSG_ERR,
+                                    (0, "PVMp4FFComposerNode::AddMemFragToTrack: Error - CheckMaxFileSize failed"));
+                    return status;
+                }
+                else if (status == PVMFSuccess)
+                {
+                    PVLOGGER_LOGMSG(PVLOGMSG_INST_REL, iLogger, PVLOGMSG_DEBUG,
+                                    (0, "PVMp4FFComposerNode::AddMemFragToTrack: Maxmimum file size reached"));
+                    return status;
+                }
+
+                PVLOGGER_LOGMSG(PVLOGMSG_INST_LLDBG, iLogger, PVLOGMSG_STACK_TRACE,
+                                (0, "PVMp4FFComposerNode::AddMemFragToTrack: Calling addSampleToTrack(%d, 0x%x, %d, %d, %d)",
+                                 aTrackId, data, frameSize, iClockConverter.get_current_timestamp(), flags));
+
+
+                OsclMemoryFragment qcelp_memfrag;
+                qcelp_memfrag.len = frameSize;
+                qcelp_memfrag.ptr = data;
+                qcelpfrags.push_back(qcelp_memfrag);
+
+#if PROFILING_ON
+                uint32 start = OsclTickCount::TickCount();
+#endif
+                uint32 qcelpts = iClockConverter.get_current_timestamp();
+
+                LOGDATATRAFFIC((0, "PVMp4FFComposerNode::AddMemFragToTrack: TrackID=%d, Size=%d, TS=%d, Flags=%d, Mime=%s",
+                                aTrackId, frameSize, qcelpts, flags, aPort->GetMimeType().get_cstr()));
+
+                if (!iMpeg4File->addSampleToTrack(aTrackId, qcelpfrags, qcelpts, flags))
+                {
+                    PVLOGGER_LOGMSG(PVLOGMSG_INST_REL, iLogger, PVLOGMSG_ERR,
+                                    (0, "PVMp4FFComposerNode::AddMemFragToTrack: Error - addSampleToTrack failed"));
+                    return PVMFFailure;
+                }
+                iSampleInTrack = true;
+#if PROFILING_ON
+                uint32 stop = OsclTickCount::TickCount();
+                uint32 comptime = OsclTickCount::TicksToMsec(stop - start);
+                uint32 dataSize = 0;
+                for (uint32 ii = 0; ii < qcelpfrags.size(); ii++)
+                {
+                    dataSize += qcelpfrags[ii].len;
+                }
+                GenerateDiagnostics(comptime, dataSize);
+
+#endif
+
+                // Send progress report after sample is successfully added
+                SendProgressReport(aTimestamp);
+
+#if PROFILING_ON
+                ++(stats->iNumFrames);
+                stats->iDuration = aTimestamp;
+#endif
+                data += frameSize;
+                bytesProcessed += frameSize;
+                aTimestamp += 20;
+                qcelpfrags.clear();
+            }
+        }
+        if (iRealTimeTS)
+        {
+            aPort->SetLastTS(aTimestamp - 20);
+        }
+    }
+
+    else if (aFormat == PVMF_MIME_EVRC)
+    {
+        if (iRealTimeTS)
+        {
+            if (((int32) aTimestamp - (int32) aPort->GetLastTS()) < 20)
+            {
+                aTimestamp = aPort->GetLastTS() + 20;
+            }
+
+            aPort->SetLastTS(aTimestamp);
+        }
+
+        uint32 bytesProcessed = 0;
+        uint32 frameSize = 0;
+        Oscl_Vector<OsclMemoryFragment, OsclMemAllocator> evrcfrags;
+        for (i = 0; i < aFrame.size(); i++)
+        {
+            bytesProcessed = 0;
+            size = aFrame[i].len;
+            data = OSCL_REINTERPRET_CAST(uint8*, aFrame[i].ptr);
+            // Parse audio data and add one 20ms frame to track at a time
+            while (bytesProcessed < size)
+            {
+                // Check for max duration
+                status = CheckMaxDuration(aTimestamp);
+                if (status == PVMFFailure)
+                {
+                    PVLOGGER_LOGMSG(PVLOGMSG_INST_REL, iLogger, PVLOGMSG_ERR,
+                                    (0, "PVMp4FFComposerNode::AddMemFragToTrack: Error - CheckMaxDuration failed"));
+                    return status;
+                }
+                else if (status == PVMFSuccess)
+                {
+                    PVLOGGER_LOGMSG(PVLOGMSG_INST_REL, iLogger, PVLOGMSG_DEBUG,
+                                    (0, "PVMp4FFComposerNode::AddMemFragToTrack: Maxmimum duration reached"));
+                    return status;
+                }
+
+                // Update clock converter
+                iClockConverter.set_timescale(timeScale);
+                iClockConverter.set_clock_other_timescale(aTimestamp, 1000);
+
+                // Check max file size
+                int32 frSize = GetEVRCFrameSize(data[0]);
+                if (frSize == -1)
+                {
+                    PVLOGGER_LOGMSG(PVLOGMSG_INST_REL, iLogger, PVLOGMSG_ERR,
+                                    (0, "PVMp4FFComposerNode::AddMemFragToTrack: Error - Frame Type Not Supported - Skipping"));
+                    LOGDATATRAFFIC((0, "PVMp4FFComposerNode::AddMemFragToTrack - Invalid Frame: TrackID=%d, Byte=0x%x, Mime=%s",
+                                    aTrackId, data[0], aPort->GetMimeType().get_cstr()));
+                    return PVMFFailure;
+                }
+                frameSize = (uint32)frSize;
+
+                status = CheckMaxFileSize(frameSize);
+                if (status == PVMFFailure)
+                {
+                    PVLOGGER_LOGMSG(PVLOGMSG_INST_REL, iLogger, PVLOGMSG_ERR,
+                                    (0, "PVMp4FFComposerNode::AddMemFragToTrack: Error - CheckMaxFileSize failed"));
+                    return status;
+                }
+                else if (status == PVMFSuccess)
+                {
+                    PVLOGGER_LOGMSG(PVLOGMSG_INST_REL, iLogger, PVLOGMSG_DEBUG,
+                                    (0, "PVMp4FFComposerNode::AddMemFragToTrack: Maxmimum file size reached"));
+                    return status;
+                }
+
+                PVLOGGER_LOGMSG(PVLOGMSG_INST_LLDBG, iLogger, PVLOGMSG_STACK_TRACE,
+                                (0, "PVMp4FFComposerNode::AddMemFragToTrack: Calling addSampleToTrack(%d, 0x%x, %d, %d, %d)",
+                                 aTrackId, data, frameSize, iClockConverter.get_current_timestamp(), flags));
+
+
+                OsclMemoryFragment evrc_memfrag;
+                evrc_memfrag.len = frameSize;
+                evrc_memfrag.ptr = data;
+                evrcfrags.push_back(evrc_memfrag);
+
+#if PROFILING_ON
+                uint32 start = OsclTickCount::TickCount();
+#endif
+                uint32 evrcts = iClockConverter.get_current_timestamp();
+
+                LOGDATATRAFFIC((0, "PVMp4FFComposerNode::AddMemFragToTrack: TrackID=%d, Size=%d, TS=%d, Flags=%d, Mime=%s",
+                                aTrackId, frameSize, evrcts, flags, aPort->GetMimeType().get_cstr()));
+
+                if (!iMpeg4File->addSampleToTrack(aTrackId, evrcfrags, evrcts, flags))
+                {
+                    PVLOGGER_LOGMSG(PVLOGMSG_INST_REL, iLogger, PVLOGMSG_ERR,
+                                    (0, "PVMp4FFComposerNode::AddMemFragToTrack: Error - addSampleToTrack failed"));
+                    return PVMFFailure;
+                }
+                iSampleInTrack = true;
+#if PROFILING_ON
+                uint32 stop = OsclTickCount::TickCount();
+                uint32 comptime = OsclTickCount::TicksToMsec(stop - start);
+                uint32 dataSize = 0;
+                for (uint32 ii = 0; ii < evrcfrags.size(); ii++)
+                {
+                    dataSize += evrcfrags[ii].len;
+                }
+                GenerateDiagnostics(comptime, dataSize);
+
+#endif
+
+                // Send progress report after sample is successfully added
+                SendProgressReport(aTimestamp);
+
+#if PROFILING_ON
+                ++(stats->iNumFrames);
+                stats->iDuration = aTimestamp;
+#endif
+                data += frameSize;
+                bytesProcessed += frameSize;
+                aTimestamp += 20;
+                evrcfrags.clear();
+            }
+        }
+        if (iRealTimeTS)
+        {
+            aPort->SetLastTS(aTimestamp - 20);
+        }
+    }
+
     else if (aFormat == PVMF_MIME_MPEG4_AUDIO)
     {
+        uint8_t *bufPtrPos =(uint8_t *) (aMemFrag.getMemFragPtr());
+        if((*((uint32_t*)(bufPtrPos))) != 0x51434F4D)
+        {
+        //non-tunnel mode encode - single frame
         status = CheckMaxDuration(aTimestamp);
         if (status == PVMFFailure)
         {
@@ -2863,6 +3150,101 @@ PVMFStatus PVMp4FFComposerNode::AddMemFragToTrack(Oscl_Vector<OsclMemoryFragment
         ++(stats->iNumFrames);
         stats->iDuration = aTimestamp;
 #endif
+         }
+         else
+         {
+            //multiple frames in single fragment support
+            uint32 numFrags = aFrame.size();
+            uint32 timestamp = aTimestamp;
+            Oscl_Vector<OsclMemoryFragment, OsclMemAllocator> pFrame;
+            uint16_t frameSize;
+            uint8_t *frameptr;
+            uint32 initialTimeStamp = timestamp;
+            PVMP4FFCNFormatSpecificConfig* config = aPort->GetFormatSpecificConfig();
+
+            bufPtrPos+=4; //skip magic number
+            uint16_t frameCount  = *((uint16_t*)(bufPtrPos));
+            bufPtrPos+=2;//skip frame counter
+
+            for(int i=0;i<frameCount;i++)
+            {
+                // Check for max duration
+                status = CheckMaxDuration(timestamp);
+                if (status == PVMFFailure)
+                {
+                      PVLOGGER_LOGMSG(PVLOGMSG_INST_REL, iLogger, PVLOGMSG_ERR,
+                          (0, "PVMp4FFComposerNode::AddMemFragToTrack: Error - CheckMaxDuration failed"));
+                      return status;
+                }
+                else if (status == PVMFSuccess)
+                {
+                      PVLOGGER_LOGMSG(PVLOGMSG_INST_REL, iLogger, PVLOGMSG_DEBUG,
+                               (0, "PVMp4FFComposerNode::AddMemFragToTrack: Maxmimum duration reached"));
+                      return status;
+                }
+
+                // Update clock converter
+                iClockConverter.set_timescale(timeScale);
+                iClockConverter.set_clock_other_timescale(timestamp, 1000);
+
+               frameSize = *((uint16_t*)(bufPtrPos));
+               bufPtrPos+=2;
+               frameptr = bufPtrPos ;
+               OsclMemoryFragment memfragment;
+               memfragment.len = frameSize;
+               memfragment.ptr = frameptr;
+               pFrame.push_back(memfragment);
+               bufPtrPos += frameSize;
+
+               status = CheckMaxFileSize(frameSize);
+               if (status == PVMFFailure)
+               {
+                   PVLOGGER_LOGMSG(PVLOGMSG_INST_REL, iLogger, PVLOGMSG_ERR,
+                                   (0, "PVMp4FFComposerNode::AddMemFragToTrack: Error - CheckMaxFileSize failed"));
+                   return status;
+               }
+               else if (status == PVMFSuccess)
+               {
+                   PVLOGGER_LOGMSG(PVLOGMSG_INST_REL, iLogger, PVLOGMSG_DEBUG,
+                                   (0, "PVMp4FFComposerNode::AddMemFragToTrack: Maxmimum file size reached"));
+                   return status;
+               }
+
+               if (iRealTimeTS)
+               {
+                   if (timestamp <= aPort->GetLastTS())
+                   {
+                        timestamp = aPort->GetLastTS() + 1;
+                   }
+                   aPort->SetLastTS(timestamp);
+               }
+
+                PVLOGGER_LOGMSG(PVLOGMSG_INST_LLDBG, iLogger, PVLOGMSG_STACK_TRACE,
+                                (0, "PVMp4FFComposerNode::AddMemFragToTrack: Calling addSampleToTrack(%d, 0x%x, %d, %d, %d)",
+                                 aTrackId, data, frameSize, iClockConverter.get_current_timestamp(), flags));
+
+               uint32 aacts = iClockConverter.get_current_timestamp();
+               if (!iMpeg4File->addSampleToTrack(aTrackId, pFrame, aacts, flags))
+               {
+                   PVLOGGER_LOGMSG(PVLOGMSG_INST_REL, iLogger, PVLOGMSG_ERR,
+                                     (0, "PVMp4FFComposerNode::AddMemFragToTrack: Error - addSampleToTrack failed"));
+                   return PVMFFailure;
+               }
+               iSampleInTrack = true;
+               // Send progress report after sample is successfully added
+               SendProgressReport(timestamp);
+               if (status == PVMFFailure)
+                   ReportErrorEvent(PVMF_MP4FFCN_ERROR_ADD_SAMPLE_TO_TRACK_FAILED, (OsclAny*)aPort);
+               pFrame.erase(&pFrame[0]);
+
+#if PROFILING_ON
+               ++(stats->iNumFrames);
+               stats->iDuration = timestamp;
+#endif
+               timestamp = initialTimeStamp + (((1024 *1000)/(float)config->iSamplingRate) * (i + 1));
+
+            }
+         }
     }
 
     return PVMFSuccess;
@@ -2974,6 +3356,28 @@ int32 PVMp4FFComposerNode::GetIETFFrameSize(uint8 aFrameType,
 }
 
 //////////////////////////////////////////////////////////////////////////////////
+int32 PVMp4FFComposerNode::GetQCELPFrameSize(uint8 aBitRate)
+{
+    uint8 frameSize[5] = {1, 4, 8, 17, 35};
+
+    if (aBitRate >= 0 && aBitRate < 5)
+        return (frameSize[aBitRate]);
+    else
+        return -1; //Error
+}
+
+//////////////////////////////////////////////////////////////////////////////////
+int32 PVMp4FFComposerNode::GetEVRCFrameSize(uint8 aBitRate)
+{
+    uint8 frameSize[5] = {1, 3, 6, 11, 23};
+
+    if (aBitRate >= 0 && aBitRate < 5)
+        return (frameSize[aBitRate]);
+    else
+        return -1; //Error
+}
+
+//////////////////////////////////////////////////////////////////////////////////
 //                 Progress and max size / duration routines
 //////////////////////////////////////////////////////////////////////////////////
 PVMFStatus PVMp4FFComposerNode::SendProgressReport(uint32 aTimestamp)
@@ -3023,6 +3427,7 @@ PVMFStatus PVMp4FFComposerNode::CheckMaxFileSize(uint32 aFrameSize)
             // flush() on the writer from this very same
             // thread. Instead, we use a marker to report an event to
             // the author node next time a new fragment is processed.
+            LOG_ERR((0, "PVMp4FFComposerNode::CheckMaxFileSize MAX_FILESIZE Reached"));
             iMaxReachedEvent = PVMF_COMPOSER_MAXFILESIZE_REACHED;
 #else
             // Finalized output file
@@ -3061,6 +3466,7 @@ PVMFStatus PVMp4FFComposerNode::CheckMaxDuration(uint32 aTimestamp)
             // flush() on the writer from this very same
             // thread. Instead, we use a marker to report an event to
             // the author node next time a new fragment is processed.
+            LOG_ERR((0, "PVMp4FFComposerNode::CheckMaxDuration MAX_DURATION Reached"));
             iMaxReachedEvent = PVMF_COMPOSER_MAXDURATION_REACHED;
 #else
 

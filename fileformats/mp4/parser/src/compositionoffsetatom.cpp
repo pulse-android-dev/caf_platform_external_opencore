@@ -90,6 +90,7 @@ CompositionOffsetAtom::CompositionOffsetAtom(MP4_FF_FILE *fp,
     iParsedDataLogger = PVLogger::GetLoggerObject("mp4ffparser_parseddata");
 
     iMarkerTableCreation = false;
+    _psampleCountperCacheBlock = NULL;
 
     /* Add this AO to the scheduler */
     if (OsclExecScheduler::Current() != NULL)
@@ -138,6 +139,13 @@ CompositionOffsetAtom::CompositionOffsetAtom(MP4_FF_FILE *fp,
                             return;
                         }
 
+                        PV_MP4_FF_ARRAY_NEW(NULL, uint32, (fptrBuffSize), _psampleCountperCacheBlock);
+                        if (_psampleCountperCacheBlock == NULL)
+                        {
+                            _success = false;
+                            _mp4ErrorCode = MEMORY_ALLOCATION_FAILED;
+                            return;
+                        }
 
                         PV_MP4_FF_ARRAY_NEW(NULL, uint32, (_stbl_buff_size), _psampleCountVec);
                         if (_psampleCountVec == NULL)
@@ -163,6 +171,9 @@ CompositionOffsetAtom::CompositionOffsetAtom(MP4_FF_FILE *fp,
                             _psampleCountVec[idx] = 0;
                             _psampleOffsetVec[idx] = 0;
                         }
+
+                        for (uint32 idx = 0; idx < fptrBuffSize; idx++)
+                            _psampleCountperCacheBlock[idx] = 0;
 
                         OsclAny* ptr = (MP4_FF_FILE *)(oscl_malloc(sizeof(MP4_FF_FILE)));
                         if (ptr == NULL)
@@ -312,9 +323,25 @@ bool CompositionOffsetAtom::ParseEntryUnit(uint32 entry_cnt)
         {
             return false;
         }
+
         _psampleCountVec[_curr_entry_point] = (number);
         _psampleOffsetVec[_curr_entry_point] = (offset);
         _parsed_entry_cnt++;
+
+        if(_parsing_mode)
+        {
+            uint32 totalsampleCountperCacheBlock = 0;
+
+            for (uint32 i = 0 ; i < _next_buff_number ; i++)
+            {
+                totalsampleCountperCacheBlock += _psampleCountperCacheBlock[i];
+            }
+
+            if(totalsampleCountperCacheBlock < _iTotalNumSamplesInTrack)
+            {
+                _psampleCountperCacheBlock[_curr_buff_number] += (number);
+            }
+        }
     }
     return true;
 }
@@ -330,6 +357,9 @@ CompositionOffsetAtom::~CompositionOffsetAtom()
 
     if (_stbl_fptr_vec != NULL)
         PV_MP4_ARRAY_DELETE(NULL, _stbl_fptr_vec);
+
+    if (_psampleCountperCacheBlock != NULL)
+        PV_MP4_ARRAY_DELETE(NULL, _psampleCountperCacheBlock);
 
     deleteMarkerTable();
 
@@ -619,6 +649,8 @@ CompositionOffsetAtom::resetStateVariables(uint32 sampleNum)
     _currPeekIndex = -1;
     _currPeekTimeOffset = 0;
 
+    if(_parsed_entry_cnt == _entryCount) _parsed_entry_cnt = 0;
+
     // It is assumed that sample 0 has a ts of 0 - i.e. the first
     // entry in the table starts with the delta between sample 1 and sample 0
     if ((_psampleOffsetVec == NULL) ||
@@ -636,7 +668,21 @@ CompositionOffsetAtom::resetStateVariables(uint32 sampleNum)
         }
     }
 
-    for (uint32 i = 0; i < _entryCount; i++)
+    if(_parsing_mode)
+    {
+        for (uint32 i = 0; i < _curr_buff_number; i++)
+        {
+            _currPeekIndex += _stbl_buff_size;
+            _currPeekSampleCount += _psampleCountperCacheBlock[i];
+            _currPeekTimeOffset += _psampleCountperCacheBlock[i];
+
+            _currGetIndex += _stbl_buff_size;
+            _currGetSampleCount += _psampleCountperCacheBlock[i];
+            _currGetTimeOffset += _psampleCountperCacheBlock[i];
+        }
+    }
+
+    for (uint32 i = _stbl_buff_size*_curr_buff_number; i < _entryCount; i++)
     {
         _currPeekIndex++;
         _currPeekSampleCount += _psampleCountVec[i%_stbl_buff_size];
@@ -653,8 +699,9 @@ CompositionOffsetAtom::resetStateVariables(uint32 sampleNum)
 
     }
 
-    // Went past end of list - not a valid sample number
-    return PV_ERROR;
+    // Went past end of list - but sample number may not be invalid
+    // It is not mandatory that all samples should have CTTS entry.
+    return (EVERYTHING_FINE);
 }
 
 int32 CompositionOffsetAtom::resetPeekwithGet()

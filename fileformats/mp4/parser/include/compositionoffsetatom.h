@@ -135,6 +135,8 @@ class CompositionOffsetAtom : public FullAtom,
         int32 _currPeekTimeOffset;
         uint32 _parsing_mode;
         PVLogger *iLogger, *iStateVarLogger, *iParsedDataLogger;
+
+        uint32 *_psampleCountperCacheBlock;
 };
 
 #endif  // COMPOSITIONOFFSETATOM_H_INCLUDED

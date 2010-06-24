@@ -1,6 +1,7 @@
 /*
  * Copyright (C) 2008, The Android Open Source Project
  * Copyright (C) 2008 HTC Inc.
+ * Copyright (c) 2009, Code Aurora Forum. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,14 +21,13 @@
 
 #include <unistd.h>
 #include <media/thread_init.h>
-#include <media/MediaProfiles.h>
 #include <surfaceflinger/ISurface.h>
 #include <camera/ICamera.h>
+#include <cutils/properties.h> // for property_get
 #include "authordriver.h"
 #include "pv_omxcore.h"
 #include <sys/prctl.h>
 #include "pvmf_composer_size_and_duration.h"
-#include "pvmf_duration_infomessage.h"
 #include "android_camera_input.h"
 
 using namespace android;
@@ -119,7 +119,6 @@ AuthorDriver::AuthorDriver()
     mVideo_bitrate_setting(0),
     ifpOutput(NULL)
 {
-    mMediaProfiles = MediaProfiles::getInstance();
     mSyncSem = new OsclSemaphore();
     mSyncSem->Create();
 
@@ -398,6 +397,16 @@ void AuthorDriver::handleSetOutputFormat(set_output_format_command *ac)
         mComposerMimeType = "/x-pvmf/ff-mux/adts";
         break;
 
+    // Adding QCP file support
+    case OUTPUT_FOMRAT_QCP:
+        mComposerMimeType = "/x-pvmf/ff-mux/qcp";
+        break;
+
+    // Adding 3GPP2 file support
+    case OUTPUT_FORMAT_THREE_GPP2:
+        mComposerMimeType = "/x-pvmf/ff-mux/3g2";
+        break;
+
     default:
         LOGE("Ln %d unsupported file format: %d", __LINE__, ac->of);
         commandFailed(ac);
@@ -423,13 +432,18 @@ void AuthorDriver::handleSetAudioEncoder(set_audio_encoder_command *ac)
 
     int error = 0;
     OSCL_HeapString<OsclMemAllocator> iAudioEncoderMimeType;
+    char  *iAudioFormat = NULL;
 
     if (ac->ae == AUDIO_ENCODER_DEFAULT)
         ac->ae = AUDIO_ENCODER_AMR_NB;
 
+        iAudioFormat = PVMF_MIME_PCM16;
+
     switch(ac->ae) {
     case AUDIO_ENCODER_AMR_NB:
         iAudioEncoderMimeType = "/x-pvmf/audio/encode/amr-nb";
+        iAudioFormat = PVMF_MIME_AMR_IETF;
+
         // AMR_NB only supports 8kHz sampling rate
         if (mSamplingRate == 0)
         {
@@ -491,15 +505,18 @@ void AuthorDriver::handleSetAudioEncoder(set_audio_encoder_command *ac)
         if (mSamplingRate == 0)
         {
             // No sampling rate set, use the default
-            mSamplingRate = DEFAULT_AUDIO_SAMPLING_RATE;
+            mSamplingRate = 48000;
         }
         // Check the number of channels
         if (mNumberOfChannels == 0)
         {
             // Number of channels not set, use the default
-            mNumberOfChannels = DEFAULT_AUDIO_NUMBER_OF_CHANNELS;
+#ifdef SURF8K
+            mNumberOfChannels = 1;
+#else
+            mNumberOfChannels = 2;
+#endif
         }
-
         // Is file container type AAC-ADIF?
         if(mOutputFormat == OUTPUT_FORMAT_AAC_ADIF)
         {
@@ -517,6 +534,68 @@ void AuthorDriver::handleSetAudioEncoder(set_audio_encoder_command *ac)
         {
             // AAC for mixed audio/video containers
             iAudioEncoderMimeType = "/x-pvmf/audio/encode/X-MPEG4-AUDIO";
+            iAudioFormat = PVMF_MIME_MPEG4_AUDIO;
+        }
+        break;
+
+    // Adding support for EVRC and QCELP codec type
+    case AUDIO_ENCODER_EVRC:
+        iAudioEncoderMimeType = "/x-pvmf/audio/encode/evrc";
+        iAudioFormat = PVMF_MIME_EVRC;
+
+        if (mSamplingRate == 0)
+        {
+            // Sampling rate not set, use the default
+            mSamplingRate = 8000;
+        }
+        else if (mSamplingRate != 8000)
+        {
+            LOGE("Only valid sampling rate for AMR_NB is 8kHz.");
+            commandFailed(ac);
+            return;
+        }
+
+        // AMR_NB only supports mono (IE 1 channel)
+        if (mNumberOfChannels == 0)
+        {
+            // Number of channels not set, use the default
+            mNumberOfChannels = 1;
+        }
+        else if (mNumberOfChannels != 1)
+        {
+            LOGE("Only valid number of channels for ANR_NB is 1.");
+            commandFailed(ac);
+            return;
+        }
+        break;
+
+    case AUDIO_ENCODER_QCELP:
+        iAudioEncoderMimeType = "/x-pvmf/audio/encode/qcelp";
+        iAudioFormat = PVMF_MIME_QCELP;
+
+        if (mSamplingRate == 0)
+        {
+            // Sampling rate not set, use the default
+            mSamplingRate = 8000;
+        }
+        else if (mSamplingRate != 8000)
+        {
+            LOGE("Only valid sampling rate for AMR_NB is 8kHz.");
+            commandFailed(ac);
+            return;
+        }
+
+        // AMR_NB only supports mono (IE 1 channel)
+        if (mNumberOfChannels == 0)
+        {
+            // Number of channels not set, use the default
+            mNumberOfChannels = 1;
+        }
+        else if (mNumberOfChannels != 1)
+        {
+            LOGE("Only valid number of channels for ANR_NB is 1.");
+            commandFailed(ac);
+            return;
         }
         break;
 
@@ -542,6 +621,13 @@ void AuthorDriver::handleSetAudioEncoder(set_audio_encoder_command *ac)
     if (!mAudioInputMIO->setAudioNumChannels(mNumberOfChannels))
     {
         LOGE("Failed to set the number of channels %d", mNumberOfChannels);
+        commandFailed(ac);
+        return;
+    }
+
+    if (!mAudioInputMIO->setAudioFormatType(iAudioFormat))
+    {
+        LOGE("Compressed Audio Input not supported %s", iAudioFormat);
         commandFailed(ac);
         return;
     }
@@ -663,12 +749,14 @@ void AuthorDriver::handleSetOutputFile(set_output_file_command *ac)
     }
 
     if (( OUTPUT_FORMAT_AMR_NB == mOutputFormat ) || ( OUTPUT_FORMAT_AMR_WB == mOutputFormat ) ||
-        ( OUTPUT_FORMAT_AAC_ADIF == mOutputFormat ) || ( OUTPUT_FORMAT_AAC_ADTS == mOutputFormat )) {
+        ( OUTPUT_FORMAT_AAC_ADIF == mOutputFormat ) || ( OUTPUT_FORMAT_AAC_ADTS == mOutputFormat ) ||
+        ( OUTPUT_FOMRAT_QCP == mOutputFormat )) {
         PvmfFileOutputNodeConfigInterface *config = OSCL_DYNAMIC_CAST(PvmfFileOutputNodeConfigInterface*, mComposerConfig);
         if (!config) goto exit;
 
         ret = config->SetOutputFileDescriptor(&OsclFileHandle(ifpOutput));
-    }  else if((OUTPUT_FORMAT_THREE_GPP == mOutputFormat) || (OUTPUT_FORMAT_MPEG_4 == mOutputFormat)){
+    }  else if((OUTPUT_FORMAT_THREE_GPP == mOutputFormat) || (OUTPUT_FORMAT_MPEG_4 == mOutputFormat) || 
+               (OUTPUT_FORMAT_THREE_GPP2 == mOutputFormat)) {
         PVMp4FFCNClipConfigInterface *config = OSCL_DYNAMIC_CAST(PVMp4FFCNClipConfigInterface*, mComposerConfig);
         if (!config) goto exit;
 
@@ -1133,7 +1221,7 @@ static int setVideoBitrateHeuristically(int videoWidth)
 {
     int bitrate_setting = 192000;
     if (videoWidth >= 480) {
-        bitrate_setting = 420000;
+        bitrate_setting = 6000000;
     } else if (videoWidth >= 352) {
         bitrate_setting = 360000;
     } else if (videoWidth >= 320) {
@@ -1142,13 +1230,110 @@ static int setVideoBitrateHeuristically(int videoWidth)
     return bitrate_setting;
 }
 
+
+// Returns true on success
+static bool getMinAndMaxValuesOfProperty(const char*propertyKey, int64& minValue, int64& maxValue)
+{
+    char value[PROPERTY_VALUE_MAX];
+    int rc = property_get(propertyKey, value, 0);
+    LOGV("property_get(): rc = %d, value=%s", rc, value);
+    if (rc > 0) {
+        char* b = strchr(value, ',');
+        if (b == 0) {  // A pair of values separated by ","?
+            return false;
+        } else {
+            String8 key(value, b - value);
+            if (!safe_strtoi64(key.string(), &minValue) || !safe_strtoi64(b + 1, &maxValue)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
+// Maps the given encoder to a system property key
+// Returns true on success
+static bool getPropertyKeyForVideoEncoder(video_encoder encoder, char* name, size_t len)
+{
+    switch(encoder) {
+        case VIDEO_ENCODER_MPEG_4_SP:
+            strncpy(name, "ro.media.enc.vid.m4v.", len);
+            return true;
+        case VIDEO_ENCODER_H264:
+            strncpy(name, "ro.media.enc.vid.h264.", len);
+            return true;
+        case VIDEO_ENCODER_H263:
+            strncpy(name, "ro.media.enc.vid.h263.", len);
+            return true;
+        default:
+            LOGE("Failed to get system property key for video encoder(%d)", encoder);
+            return false;
+    }
+}
+
+// Retrieves the advertised video property range from system properties for the given encoder.
+// If the encoder is not found, or the video property is not listed as a system property,
+// default hardcoded min and max values will be used.
+static void getSupportedPropertyRange(video_encoder encoder, const char* property, int64& min, int64& max)
+{
+    char videoEncoderName[PROPERTY_KEY_MAX];
+    bool propertyKeyExists = getPropertyKeyForVideoEncoder(encoder, videoEncoderName, PROPERTY_KEY_MAX - 1);
+    if (propertyKeyExists) {
+        if ((strlen(videoEncoderName) + strlen(property) + 1) < PROPERTY_KEY_MAX) {  // Valid key length
+            strcat(videoEncoderName, property);
+        } else {
+            propertyKeyExists = false;
+        }
+    }
+    if (!propertyKeyExists || !getMinAndMaxValuesOfProperty(videoEncoderName, min, max)) {
+        if (strcmp(property, "bps") == 0) {
+            min = MIN_VIDEO_BITRATE_SETTING;
+            max = MAX_VIDEO_BITRATE_SETTING;
+        } else if (strcmp(property, "fps") == 0) {
+            min = ANDROID_MIN_FRAME_RATE_FPS;
+            max = ANDROID_MAX_FRAME_RATE_FPS;
+        } else if (strcmp(property, "width") == 0) {
+            min = ANDROID_MIN_ENCODED_FRAME_WIDTH;
+            max = ANDROID_MAX_ENCODED_FRAME_WIDTH;
+        } else if (strcmp(property, "height") == 0) {
+            min = ANDROID_MIN_ENCODED_FRAME_HEIGHT;
+            max = ANDROID_MAX_ENCODED_FRAME_HEIGHT;
+        } else {
+            LOGE("Unknown video property: %s", property);
+            min = max = 0;
+        }
+        LOGW("Use default video %s range [%lld %lld]", property, min, max);
+    }
+}
+
+static void getSupportedVideoBitRateRange(video_encoder encoder, int64& minBitRateBps, int64& maxBitRateBps)
+{
+    getSupportedPropertyRange(encoder, "bps", minBitRateBps, maxBitRateBps);
+}
+
+static void getSupportedVideoFrameRateRange(video_encoder encoder, int64& minFrameRateFps, int64& maxFrameRateFps)
+{
+    getSupportedPropertyRange(encoder, "fps", minFrameRateFps, maxFrameRateFps);
+}
+
+static void getSupportedVideoFrameWidthRange(video_encoder encoder, int64& minWidth, int64& maxWidth)
+{
+    getSupportedPropertyRange(encoder, "width", minWidth, maxWidth);
+}
+
+static void getSupportedVideoFrameHeightRange(video_encoder encoder, int64& minHeight, int64& maxHeight)
+{
+    getSupportedPropertyRange(encoder, "height", minHeight, maxHeight);
+}
+
 // Clips the intented video encoding rate so that it is
 // within the advertised support range. Logs a warning if
 // the intended bit rate is out of the range.
 void AuthorDriver::clipVideoBitrate()
 {
-    int minBitrate = mMediaProfiles->getVideoEncoderParamByName("enc.vid.bps.min", mVideoEncoder);
-    int maxBitrate = mMediaProfiles->getVideoEncoderParamByName("enc.vid.bps.max", mVideoEncoder);
+    int64 minBitrate, maxBitrate;
+    getSupportedVideoBitRateRange(mVideoEncoder, minBitrate, maxBitrate);
     if (mVideo_bitrate_setting < minBitrate) {
         LOGW("Intended video encoding bit rate (%d bps) is too small and will be set to (%lld bps)", mVideo_bitrate_setting, minBitrate);
         mVideo_bitrate_setting = minBitrate;
@@ -1160,8 +1345,8 @@ void AuthorDriver::clipVideoBitrate()
 
 void AuthorDriver::clipVideoFrameRate()
 {
-    int minFrameRate = mMediaProfiles->getVideoEncoderParamByName("enc.vid.fps.min", mVideoEncoder);
-    int maxFrameRate = mMediaProfiles->getVideoEncoderParamByName("enc.vid.fps.max", mVideoEncoder);
+    int64 minFrameRate, maxFrameRate;
+    getSupportedVideoFrameRateRange(mVideoEncoder, minFrameRate, maxFrameRate);
     if (mVideoFrameRate < minFrameRate) {
         LOGW("Intended video encoding frame rate (%d fps) is too small and will be set to (%lld fps)", mVideoFrameRate, minFrameRate);
         mVideoFrameRate = minFrameRate;
@@ -1173,8 +1358,8 @@ void AuthorDriver::clipVideoFrameRate()
 
 void AuthorDriver::clipVideoFrameWidth()
 {
-    int minFrameWidth = mMediaProfiles->getVideoEncoderParamByName("enc.vid.width.min", mVideoEncoder);
-    int maxFrameWidth = mMediaProfiles->getVideoEncoderParamByName("enc.vid.width.max", mVideoEncoder);
+    int64 minFrameWidth, maxFrameWidth;
+    getSupportedVideoFrameWidthRange(mVideoEncoder, minFrameWidth, maxFrameWidth);
     if (mVideoWidth < minFrameWidth) {
         LOGW("Intended video encoding frame width (%d) is too small and will be set to (%lld)", mVideoWidth, minFrameWidth);
         mVideoWidth = minFrameWidth;
@@ -1186,8 +1371,8 @@ void AuthorDriver::clipVideoFrameWidth()
 
 void AuthorDriver::clipVideoFrameHeight()
 {
-    int minFrameHeight = mMediaProfiles->getVideoEncoderParamByName("enc.vid.height.min", mVideoEncoder);
-    int maxFrameHeight = mMediaProfiles->getVideoEncoderParamByName("enc.vid.height.max", mVideoEncoder);
+    int64 minFrameHeight, maxFrameHeight;
+    getSupportedVideoFrameHeightRange(mVideoEncoder, minFrameHeight, maxFrameHeight);
     if (mVideoHeight < minFrameHeight) {
         LOGW("Intended video encoding frame height (%d) is too small and will be set to (%lld)", mVideoHeight, minFrameHeight);
         mVideoHeight = minFrameHeight;
@@ -1408,28 +1593,10 @@ void AuthorDriver::HandleInformationalEvent(const PVAsyncInformationalEvent& aEv
         LOGV("HandleInformationalEvent(%d)", event_type);
     }
 
-    if (PVMFInfoOverflow == event_type && mVideoInputMIO) {
-        PVUuid infomsguuid = PVMFDurationInfoMessageInterfaceUUID;
-        PVMFDurationInfoMessageInterface* eventMsg = NULL;
-        PVInterface* infoExtInterface = aEvent.GetEventExtensionInterface();
-        if (infoExtInterface &&
-                infoExtInterface->queryInterface(infomsguuid, (PVInterface*&)eventMsg) && eventMsg) {
-            PVUuid eventuuid;
-            int32 infoCode;
-            eventMsg->GetCodeUUID(infoCode, eventuuid);
-            if (eventuuid == infomsguuid) {
-                uint32 duration = eventMsg->GetDuration();
-                ((AndroidCameraInput *)mVideoInputMIO)->setAudioLossDuration(duration);
-            }
-            eventMsg->removeRef();
-            eventMsg = NULL;
-        }
-    } else {
-        mListener->notify(
-                MEDIA_RECORDER_EVENT_INFO,
-                GetMediaRecorderInfoCode(aEvent),
-                aEvent.GetEventType());
-    }
+    mListener->notify(
+            MEDIA_RECORDER_EVENT_INFO,
+            GetMediaRecorderInfoCode(aEvent),
+            aEvent.GetEventType());
 }
 
 status_t AuthorDriver::setListener(const sp<IMediaPlayerClient>& listener) {

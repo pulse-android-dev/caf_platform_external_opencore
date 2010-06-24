@@ -83,6 +83,7 @@ typedef struct __PvmiMediaXferHeader
     uint32 stream_id;
     OsclAny *private_data_ptr;
     uint32 private_data_length;
+    int32  pmem_fd; // PMEM file descriptor.
 } PvmiMediaXferHeader;
 
 /**

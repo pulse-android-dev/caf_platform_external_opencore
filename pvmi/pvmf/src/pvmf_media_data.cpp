@@ -90,6 +90,16 @@ OSCL_EXPORT_REF void PVMFMediaData::setStreamID(uint32 id)
     hdr_ptr->stream_id = id;
 }
 
+OSCL_EXPORT_REF void PVMFMediaData::setPMEMFD(int32 fd)
+{
+    hdr_ptr->pmem_fd = fd;
+}
+
+OSCL_EXPORT_REF int32 PVMFMediaData::getPMEMFD()
+{
+    return hdr_ptr->pmem_fd;
+}
+
 OSCL_EXPORT_REF uint32 PVMFMediaData::getMarkerInfo()
 {
     return impl_ptr->getMarkerInfo();
