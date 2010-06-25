@@ -846,7 +846,8 @@ void PlayerDriver::handleSetAudioSink(PlayerSetAudioSink* command)
     if (command->audioSink()->realtime()) {
         LOGV("Create realtime output");
 
-#ifdef SURF7x30
+#if 0 // Disable Low power audio
+//#ifdef SURF7x30
 
         char value[128];
 
