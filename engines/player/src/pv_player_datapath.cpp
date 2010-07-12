@@ -46,7 +46,8 @@ PVPlayerDatapath::PVPlayerDatapath() :
         iSourceTrackInfo(NULL),
         iDatapathConfig(CONFIG_NONE),
         iErrorCondition(false),
-        iErrorOccurredDuringErrorCondition(false)
+        iErrorOccurredDuringErrorCondition(false),
+        iPendingCmds(0)
 {
     AddToScheduler();
 
