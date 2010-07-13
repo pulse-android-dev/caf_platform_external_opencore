@@ -1,5 +1,6 @@
 /* ------------------------------------------------------------------
  * Copyright (C) 1998-2009 PacketVideo
+ * Copyright (c) 2010, Code Aurora Forum. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -149,6 +150,26 @@ class FillBufferDoneThreadSafeCallbackAOEnc : public ThreadSafeCallbackAO
 
         virtual ~FillBufferDoneThreadSafeCallbackAOEnc();
         ThreadSafeMemPoolFixedChunkAllocator *iMemoryPool;
+};
+
+
+class FreeChunkAvailableThreadSafeCB : public ThreadSafeCallbackAO
+{
+  public:
+        // Constructor
+        FreeChunkAvailableThreadSafeCB(void* aObserver = NULL,
+                             uint32 aDepth = DEFAULT_QUEUE_DEPTH,
+                             const char* aAOname = FillBufferDoneAOName,
+                             int32 aPriority = OsclActiveObject::EPriorityNominal);
+
+        // OVERLOADED ProcessEvent
+        virtual OsclReturnCode ProcessEvent(OsclAny* EventData);
+        // overloaded Run and DeQueue to optimize performance (and process more than 1 event per Run)
+        virtual void Run();
+
+        virtual OsclAny* Dequeue(OsclReturnCode &stat);
+        virtual ~FreeChunkAvailableThreadSafeCB( );
+
 };
 
 #endif  //#ifndef PVMF_OMX_ENC_CALLBACKS_H_INLCUDED

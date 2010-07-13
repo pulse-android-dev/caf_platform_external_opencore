@@ -329,6 +329,11 @@ PVMFOMXEncNode::~PVMFOMXEncNode()
         iThreadSafeHandlerFillBufferDone = NULL;
     }
 
+    if (iThreadSafeCBFreeChunkAvailable) {
+      OSCL_DELETE( iThreadSafeCBFreeChunkAvailable  );
+      iThreadSafeCBFreeChunkAvailable = NULL;
+    }
+
     if (iMediaDataMemPool)
     {
         iMediaDataMemPool->removeRef();
@@ -788,6 +793,7 @@ PVMFOMXEncNode::PVMFOMXEncNode(int32 aPriority) :
     iThreadSafeHandlerEventHandler = NULL;
     iThreadSafeHandlerEmptyBufferDone = NULL;
     iThreadSafeHandlerFillBufferDone = NULL;
+    iThreadSafeCBFreeChunkAvailable = NULL;
 
     iInBufMemoryPool = NULL;
     iOutBufMemoryPool = NULL;
@@ -6138,6 +6144,12 @@ void PVMFOMXEncNode::DoPrepare(PVMFOMXEncNodeCommand& aCmd)
                 iOMXEncoder = NULL;
             }
 
+            if( iThreadSafeCBFreeChunkAvailable ){
+              OSCL_DELETE(iThreadSafeCBFreeChunkAvailable);
+              iThreadSafeCBFreeChunkAvailable = NULL;
+            }
+
+            iThreadSafeCBFreeChunkAvailable = OSCL_NEW( FreeChunkAvailableThreadSafeCB, (this, iNumInputBuffers + iNumOutputBuffers , "FreeChunkAvailableAO", Priority( ) + 1));
 
             // Init Encoder
             iCurrentEncoderState = OMX_StateLoaded;
@@ -7822,9 +7834,10 @@ void PVMFOMXEncNode::freechunkavailable(OsclAny *aContext)
     }
 
     // reschedule
-    if (IsAdded())
-        RunIfNotReady();
-
+    if (IsAdded()) {
+      OsclAny * p = NULL;
+      iThreadSafeCBFreeChunkAvailable->ReceiveEvent( p );
+    }
 
 }
 

@@ -954,6 +954,7 @@ class PVMFOMXEncNode
         EventHandlerThreadSafeCallbackAOEnc*     iThreadSafeHandlerEventHandler;
         EmptyBufferDoneThreadSafeCallbackAOEnc* iThreadSafeHandlerEmptyBufferDone;
         FillBufferDoneThreadSafeCallbackAOEnc*  iThreadSafeHandlerFillBufferDone;
+        FreeChunkAvailableThreadSafeCB  * iThreadSafeCBFreeChunkAvailable;
 
         OMX_CALLBACKTYPE       iCallbacks; // structure that contains callback ptrs.
         // OMX CALLBACKS
