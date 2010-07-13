@@ -1360,6 +1360,11 @@ void PlayerDriver::CommandCompleted(const PVCmdResponse& aResponse)
                 mPvPlayer->sendEvent(MEDIA_SEEK_COMPLETE);
                 break;
 
+            case PlayerCommand::PLAYER_REMOVE_DATA_SOURCE:
+                LOGV("remove datasource complete");
+                mVideoOutputMIO = NULL;
+                break;
+
             default: /* shut up gcc */
                 break;
         }
@@ -1917,6 +1922,51 @@ status_t PVPlayer::getMetadata(const media::Metadata::Filter& ids,
     ok = ok && metadata.appendBool(Metadata::kSeekBackwardAvailable, !live);
     ok = ok && metadata.appendBool(Metadata::kSeekForwardAvailable, !live);
     return ok ? OK : UNKNOWN_ERROR;
+}
+
+status_t PVPlayer::suspend()
+{
+    LOGV("suspend");
+    // Retrieve position when suspended
+    status_t status = getCurrentPosition(&mPositionWhenSuspend);
+
+    // get playing status
+    mIsPlaying = isPlaying();
+
+    // Cancel all cmnds
+    status = mPlayerDriver->enqueueCommand(new PlayerCancelAllCommands(0,0));
+    // Log failure from CancelAllCommands() and call Reset() regardless.
+    if (status != NO_ERROR) {
+        LOGE("failed to cancel all exiting PV player engine commands with error code (%d)", status);
+    }
+
+    // Reset and Remove Datasource
+    status = mPlayerDriver->enqueueCommand(new PlayerReset(0,0));
+    // We should never fail in Reset(), but logs the failure just in case.
+    if (status != NO_ERROR) {
+        LOGE("failed to reset PV player engine with error code (%d)", status);
+    } else {
+        status = mPlayerDriver->enqueueCommand(new PlayerRemoveDataSource(0,0));
+    }
+    mSurface.clear();
+    mIsDataSourceSet = false;
+
+    return status;
+}
+
+status_t PVPlayer::resume()
+{
+    LOGV("resume");
+    // setup data path by calling prepare
+    status_t status = prepare();
+
+    // Seek to position when suspended
+    status = seekTo(mPositionWhenSuspend);
+
+    // Start playback if playing when suspended
+    if(mIsPlaying)
+    status = start();
+    return status;
 }
 
 } // namespace android
