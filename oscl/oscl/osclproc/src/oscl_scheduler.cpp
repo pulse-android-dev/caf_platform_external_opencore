@@ -34,6 +34,9 @@
 
 #include "oscl_scheduler_tuneables.h"
 
+#undef LOG_TAG
+#define LOG_TAG "PVScheduler"
+#include <utils/Log.h>
 
 /////////////////////////////////////
 // Logger Macros
@@ -1232,7 +1235,9 @@ void OsclExecSchedulerCommonBase::CallRunExec(PVActiveBase *pvactive)
     //Pass the ErrorTrapImp pointer to reduce overhead of the Try call.
     //We already did a null ptr check on iErrorTrapImp so it's safe to de-ref here.
     int32 err;
+    LOGV("Calling Run( ) on AO %s", pvactive->iName.Str( ));
     OSCL_TRY_NO_TLS(iErrorTrapImp, err, pvactive->Run(););
+    LOGV("Returned from Run( ) on AO %s", pvactive->iName.Str( ));
 
     //end stats
     DIFF_TICK(iTime, iDelta);
