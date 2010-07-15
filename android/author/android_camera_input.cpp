@@ -946,6 +946,24 @@ void AndroidCameraInput::DoRequestCompleted(const AndroidCameraInputCmd& aCmd, P
     }
 }
 
+static int parse_size(const char *str, int &width, int &height)
+{
+    // Find the width.
+    char *end;
+    int w = (int)strtol(str, &end, 10);
+    // If an 'x' or 'X' does not immediately follow, give up.
+    if ((*end != 'x') && (*end != 'X'))
+        return -1;
+
+    // Find the height, immediately after the 'x'.
+    int h = (int)strtol(end+1, 0, 10);
+
+    width = w;
+    height = h;
+
+    return 0;
+}
+
 PVMFStatus AndroidCameraInput::DoInit()
 {
     LOGV("DoInit()");
@@ -979,7 +997,9 @@ PVMFStatus AndroidCameraInput::DoInit()
         return PVMFFailure;
     }
     CameraParameters p(s);
-    p.setPreviewSize(mFrameWidth, mFrameHeight);
+    char recordSizeBuf[25];
+    snprintf(recordSizeBuf, 25, "%dx%d", mFrameWidth, mFrameHeight);
+    p.set("record-size", recordSizeBuf);
     p.setPreviewFrameRate(mFrameRate);
     s = p.flatten();
     if (mCamera->setParameters(s) != NO_ERROR) {
@@ -992,7 +1012,14 @@ PVMFStatus AndroidCameraInput::DoInit()
     // for video recording.
     CameraParameters newCameraParam(mCamera->getParameters());
     int32 width, height;
-    newCameraParam.getPreviewSize(&width, &height);
+    const char *recordStr = NULL;
+    recordStr = newCameraParam.get("record-size");
+    if(!recordStr) {
+        LOGE("No Record dimensions set");
+        return PVMFFailure;
+    } else {
+        parse_size(recordStr, width, height);
+    }
     if (width < 0 || height < 0) {
         LOGE("Failed to get camera(%p) preview size", mCamera.get());
         return PVMFFailure;
