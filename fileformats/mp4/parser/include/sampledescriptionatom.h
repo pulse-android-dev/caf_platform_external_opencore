@@ -1,5 +1,5 @@
 /* ------------------------------------------------------------------
- * Copyright (C) 1998-2009 PacketVideo
+ * Copyright (C) 1998-2010 PacketVideo
  * Copyright (c) 2009, Code Aurora Forum. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -238,6 +238,7 @@ class SampleDescriptionAtom : public FullAtom
         bool _o3GPP2QCELP;
         bool _o3GPP2EVRC;
         bool _oAVC;
+        bool _oMP3;
 
         ProtectionSchemeInformationBox* _pProtectionSchemeInformationBox;
 };

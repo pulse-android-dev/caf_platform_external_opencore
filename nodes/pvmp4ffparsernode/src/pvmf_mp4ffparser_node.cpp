@@ -1,5 +1,5 @@
 /* ------------------------------------------------------------------
- * Copyright (C) 1998-2009 PacketVideo
+ * Copyright (C) 1998-2010 PacketVideo
  * Copyright (c) 2009, Code Aurora Forum. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -223,6 +223,7 @@ PVMFMP4FFParserNode::PVMFMP4FFParserNode(int32 aPriority) :
              iCapability.iOutputFormatCapability.push_back(PVMFFormatType(PVMF_MIME_QCELP));
              iCapability.iOutputFormatCapability.push_back(PVMFFormatType(PVMF_MIME_EVRC));
              iCapability.iOutputFormatCapability.push_back(PVMFFormatType(PVMF_MIME_MPEG4_AUDIO));
+             iCapability.iOutputFormatCapability.push_back(PVMFFormatType(PVMF_MIME_MP3)); /* support mp3 track */
              iCapability.iOutputFormatCapability.push_back(PVMFFormatType(PVMF_MIME_M4V));
              iCapability.iOutputFormatCapability.push_back(PVMFFormatType(PVMF_MIME_H2631998));
              iCapability.iOutputFormatCapability.push_back(PVMFFormatType(PVMF_MIME_H2632000));
@@ -2071,6 +2072,10 @@ PVMFStatus PVMFMP4FFParserNode::DoRequestPort(PVMFMP4FFParserNodeCommand& aCmd, 
     if (formattype == PVMF_MIME_MPEG4_AUDIO)
     {
         trackportinfo.iFormatTypeInteger = PVMF_MP4_PARSER_NODE_MPEG4_AUDIO;
+    }
+    else if (formattype == PVMF_MIME_MP3)
+    {
+        trackportinfo.iFormatTypeInteger = PVMF_MP4_PARSER_NODE_MP3_AUDIO;
     }
     else if (formattype == PVMF_MIME_H264_VIDEO_MP4)
     {
