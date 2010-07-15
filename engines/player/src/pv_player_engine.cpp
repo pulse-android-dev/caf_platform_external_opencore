@@ -170,6 +170,7 @@ PVPlayerEngine::~PVPlayerEngine()
     PVPlayerRegistryPopulator::Depopulate(iPlayerNodeRegistry, iPlayerRecognizerRegistry);
 
     iNodeUuids.clear();
+    iPreparedtoPause = false;
 
     iCommandIdMut.Close();
     iOOTSyncCommandSem.Close();
@@ -1152,6 +1153,7 @@ PVPlayerEngine::PVPlayerEngine(bool aHwAccelerated) :
         iRollOverState(RollOverStateIdle),
         iTrackSelectionHelper(NULL),
         iPlaybackPositionMode(PVPPBPOS_MODE_UNKNOWN),
+        iPreparedtoPause(false),
         iOverflowFlag(false)
 {
     iCurrentBeginPosition.iIndeterminate = true;
@@ -3050,6 +3052,11 @@ PVCommandId PVPlayerEngine::AddCommandToQueue(int32 aCmdType, OsclAny* aContextD
 void PVPlayerEngine::SetEngineState(PVPlayerEngineState aState)
 {
     PVLOGGER_LOGMSG(PVLOGMSG_INST_LLDBG, iLogger, PVLOGMSG_STACK_TRACE, (0, "PVPlayerEngine::SetEngineState() In Current state %d, New state %d", iState, aState));
+    if ((aState == PVP_ENGINE_STATE_PAUSING) &&
+            (iState == PVP_ENGINE_STATE_PREPARED))
+        iPreparedtoPause = true;
+    else
+        iPreparedtoPause = false;
     iState = aState;
 }
 
@@ -3073,11 +3080,16 @@ PVPlayerState PVPlayerEngine::GetPVPlayerState(void)
         case PVP_ENGINE_STATE_STARTING:
             return PVP_STATE_PREPARED;
 
+        case PVP_ENGINE_STATE_PAUSING:
+        {
+            if (iPreparedtoPause)
+                return PVP_STATE_PREPARED;
+        }
+
         case PVP_ENGINE_STATE_STARTED:
         case PVP_ENGINE_STATE_AUTO_PAUSING:
         case PVP_ENGINE_STATE_AUTO_PAUSED:
         case PVP_ENGINE_STATE_AUTO_RESUMING:
-        case PVP_ENGINE_STATE_PAUSING:
         case PVP_ENGINE_STATE_STOPPING:
             return PVP_STATE_STARTED;
 

@@ -1192,6 +1192,7 @@ class PVPlayerEngine : public OsclTimerObject,
         PVMFStatus DoSetConfigSyncMargin(int32 aEarlyMargin, int32 aLateMargin, int32 aMediaType);
         bool iHwAccelerated;
         int32 iCapConfigContext;
+        bool iPreparedtoPause;
 
         // Engine datapath and related variables
         Oscl_Vector<PVPlayerEngineDatapath, OsclMemAllocator> iDatapathList;
