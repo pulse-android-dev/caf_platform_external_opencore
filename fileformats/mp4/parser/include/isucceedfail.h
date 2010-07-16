@@ -183,7 +183,7 @@ typedef enum {  READ_FAILED = -1,
                 READ_ITUNES_ILST_META_DATA_FAILED = 140,
 
 
-                INSUFFICIENT_DATA = 141,
+                MP4_INSUFFICIENT_DATA = 141,
                 NOT_SUPPORTED = 142,
                 READ_OMADRM_KMS_BOX_FAILED = 143,
                 DUPLICATE_OMADRM_KMS_BOX = 144,

@@ -633,7 +633,7 @@ SampleTableAtom::getSample(uint32 sampleNum, uint8 *buf, int32 &size, uint32 &in
 
     if (sampleFileOffset + sampleSize > (int32)_fileSize)
     {
-        return INSUFFICIENT_DATA;
+        return MP4_INSUFFICIENT_DATA;
     }
 
 #ifdef OPEN_FILE_ONCE_PER_TRACK
@@ -2725,11 +2725,11 @@ SampleTableAtom::getNextNSamples(uint32 startSampleNum,
         }
 
         if (((uint32)sampleFileOffset < bufStart) || ((sigmaSampleSize + sampleFileOffset) > bufEnd))
-            _mp4ErrorCode = INSUFFICIENT_DATA;
+            _mp4ErrorCode = MP4_INSUFFICIENT_DATA;
         else if (totalFragmentLength < sigmaSampleSize)
             _mp4ErrorCode = INSUFFICIENT_BUFFER_SIZE;
 
-        if (INSUFFICIENT_DATA == _mp4ErrorCode || INSUFFICIENT_BUFFER_SIZE == _mp4ErrorCode)
+        if (MP4_INSUFFICIENT_DATA == _mp4ErrorCode || INSUFFICIENT_BUFFER_SIZE == _mp4ErrorCode)
         {
             if ((uint32)_currentPlaybackSampleNumber != startSampleNum)
             {

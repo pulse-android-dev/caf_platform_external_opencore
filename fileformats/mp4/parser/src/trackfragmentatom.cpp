@@ -673,7 +673,7 @@ TrackFragmentAtom::getNextNSamples(uint32 startSampleNum,
         AtomUtils::getCurrentFileSize(_pinput, _fileSize);
         if ((sampleFileOffset + sigmaSampleSize) > _fileSize)
         {
-            _mp4ErrorCode = INSUFFICIENT_DATA;
+            _mp4ErrorCode = MP4_INSUFFICIENT_DATA;
             _currentTrackFragmentRunSampleNumber = startSampleNum;
             *n = 0;
             for (uint32 i = 0; i < pgau->numMediaSamples; i++)

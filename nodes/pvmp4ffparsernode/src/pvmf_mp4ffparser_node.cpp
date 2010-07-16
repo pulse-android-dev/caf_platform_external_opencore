@@ -3568,7 +3568,7 @@ PVMFStatus PVMFMP4FFParserNode::DoSetDataSourcePosition(PVMFMP4FFParserNodeComma
         {
             // do nothing. No need to use the track to calculate mints, as next sample is EOT.
         }
-        else if (retval == INSUFFICIENT_DATA)
+        else if (retval == MP4_INSUFFICIENT_DATA)
         {
             iNodeTrackPortList[i].iClockConverter->set_clock_other_timescale(*actualMediaDataTS, 1000);
             if (iNodeTrackPortList[i].iState == PVMP4FFNodeTrackPortInfo::TRACKSTATE_ENDOFTRACK
@@ -5004,7 +5004,7 @@ bool PVMFMP4FFParserNode::RetrieveTrackData(PVMP4FFNodeTrackPortInfo& aTrackPort
         aTrackPortInfo.iState = PVMP4FFNodeTrackPortInfo::TRACKSTATE_SEND_ENDOFTRACK;
         return false;
     }
-    else if (retval == INSUFFICIENT_DATA)
+    else if (retval == MP4_INSUFFICIENT_DATA)
     {
         /*
          * We have run out data during playback. This could mean a few things:
@@ -5068,8 +5068,8 @@ bool PVMFMP4FFParserNode::RetrieveTrackData(PVMP4FFNodeTrackPortInfo& aTrackPort
 
 
             // check if content is poorly interleaved only for PS
-            // After repositioning, parser will get INSUFFICIENT_DATA immediately and then the poorlyinterleavedcontent event logic will be excercised.
-            // To make sure that the reposition behaviour and the playback without interruption behavior are consistent, disable the check for first INSUFFICIENT_DATA after repositioning.
+            // After repositioning, parser will get MP4_INSUFFICIENT_DATA immediately and then the poorlyinterleavedcontent event logic will be excercised.
+            // To make sure that the reposition behaviour and the playback without interruption behavior are consistent, disable the check for first MP4_INSUFFICIENT_DATA after repositioning.
             if ((NULL != iDataStreamInterface) && (iPoorlyInterleavedContentEventSent == false) && (!israndomaccesspt))
             {
                 uint32 cacheSize = 0;
@@ -6796,7 +6796,7 @@ bool PVMFMP4FFParserNode::MapMP4ErrorCodeToEventCode(int32 aMP4ErrCode, PVUuid& 
             aEventCode = PVMFMP4FFParserErrPVContentTypeAtomReadFailed;
             break;
 
-        case INSUFFICIENT_DATA:
+        case MP4_INSUFFICIENT_DATA:
             aEventUUID = PVMFFileFormatEventTypesUUID;
             aEventCode = PVMFFFErrInsufficientData;
             break;
@@ -7950,7 +7950,7 @@ PVMFStatus PVMFMP4FFParserNode::CheckForMP4HeaderAvailability()
                 }
             }
         }
-        else if (retCode == INSUFFICIENT_DATA)
+        else if (retCode == MP4_INSUFFICIENT_DATA)
         {
             iRequestReadCapacityNotificationID =
                 iDataStreamInterface->RequestReadCapacityNotification(iDataStreamSessionID,

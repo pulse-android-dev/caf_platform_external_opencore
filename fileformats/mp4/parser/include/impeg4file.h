@@ -158,6 +158,7 @@ class IMpeg4File : public ISucceedFail
         // From SampleDescription
         // Returns the number of sample entries stored in the sample description
         virtual int32 getTrackNumSampleEntries(uint32 id) = 0;
+        virtual uint8 getObjectTypeIndication(uint32 id) = 0;
 
         // From DecoderConfigDescriptor
         virtual void getTrackMIMEType(uint32 id, OSCL_String& aMimeType) = 0; // Based on OTI and string tables

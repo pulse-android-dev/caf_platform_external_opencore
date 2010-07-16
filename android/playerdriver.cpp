@@ -82,11 +82,22 @@
 #include "pvmf_local_data_source.h"
 #include "pvmf_recognizer_registry.h"
 
+//for usePVPlayer function
+#include "imp3ff.h"
+#include "oscl_file_io.h"
+#include "oscl_string_utf8.h"
+#include "aacfileparser.h"
+#include "impeg4file.h"
+#include "iqcpff.h"
+
 using namespace android;
 
 # ifndef PAGESIZE
 #  define PAGESIZE              4096
 # endif
+
+#define MAX_BUFF_SIZE 1024
+#define MIN_LPA_DURATION 360000
 
 // library and function name to retrieve device-specific MIOs
 static const char* MIO_LIBRARY_NAME = "libopencorehw.so";
@@ -94,6 +105,8 @@ static const char* VIDEO_MIO_FACTORY_NAME = "createVideoMio";
 typedef AndroidSurfaceOutput* (*VideoMioFactory)();
 
 static const nsecs_t kBufferingUpdatePeriod = seconds(10);
+
+static bool LPAInstanceExists = false;
 
 namespace {
 
@@ -315,6 +328,7 @@ class PlayerDriver :
     bool                    mContentLengthKnown;
     void*                   mLibHandle;
     nsecs_t                 mLastBufferingLog;
+    bool                    mIsAudioLPADecode;
 
     // video display surface
     android::sp<android::ISurface> mSurface;
@@ -342,6 +356,7 @@ PlayerDriver::PlayerDriver(PVPlayer* pvPlayer) :
         mEmulation(false),
         mContentLengthKnown(false),
         mLastBufferingLog(0),
+        mIsAudioLPADecode(false),
         mIsPausing(false)
 {
     LOGV("constructor");
@@ -470,7 +485,7 @@ status_t PlayerDriver::enqueueCommand(PlayerCommand* command)
         return mSyncStatus;
     }
 
-    return OK;
+    return android::OK;
 }
 
 void PlayerDriver::FinishSyncCommand(PlayerCommand* command)
@@ -841,7 +856,6 @@ void PlayerDriver::handleSetAudioSink(PlayerSetAudioSink* command)
 
     // 1. To determine if there ia a support for compressed MIO
     PVMFFormatType iFormatType;
-    bool           bIsAudioLPADecode = false;
 
     if (command->audioSink()->realtime()) {
         LOGV("Create realtime output");
@@ -875,11 +889,11 @@ void PlayerDriver::handleSetAudioSink(PlayerSetAudioSink* command)
                                 if (nDuration > 60000)
                                 {
                                     LOGE("LPA decode mode success");
-                                    bIsAudioLPADecode = true;
+                                    mIsAudioLPADecode = true;
                                 }
                             }
 
-                            if (!bIsAudioLPADecode)
+                            if (!mIsAudioLPADecode)
                             {
                               LOGE("LPA decode mode not supported duration %d sec", (nDuration / 1000));
                               delete mAudioOutputMIO;
@@ -900,7 +914,7 @@ void PlayerDriver::handleSetAudioSink(PlayerSetAudioSink* command)
             }
         }
  #endif
-        if (!bIsAudioLPADecode)
+        if (!mIsAudioLPADecode)
         {
             LOGE("Creating Non-Tunnel mode playback - uncompressed MIO");
             mAudioOutputMIO = new AndroidAudioOutput();
@@ -1214,13 +1228,16 @@ int PlayerDriver::playerThread()
     delete mAudioSink;
     PVMediaOutputNodeFactory::DeleteMediaOutputNode(mAudioNode);
     delete mAudioOutputMIO;
+    if (mIsAudioLPADecode) {
+        LPAInstanceExists = false;
+    }
     delete mVideoSink;
     if (mVideoNode) {
         PVMediaOutputNodeFactory::DeleteMediaOutputNode(mVideoNode);
         delete mVideoOutputMIO;
     }
 
-    mSyncStatus = OK;
+    mSyncStatus = android::OK;
     mSyncSem->Signal();
     // note that we only signal mSyncSem. Deleting it is handled
     // in enqueueCommand(). This is done because waiting for an
@@ -1966,6 +1983,139 @@ status_t PVPlayer::resume()
     if(mIsPlaying)
     status = start();
     return status;
+}
+
+// Called by MediaPlayerService to fall back to opencore for the following cases:
+//      -Using opencore LPA implementation for mp3 and aac streams
+//      -Playing qcelp files
+//      -Playing evrc files
+// Static
+status_t PVPlayer::usePVPlayer(const char *filename)
+{
+    LOGV("usePVPlayer: In usePVPlayer function, filename: %s",filename);
+
+    oscl_wchar output[MAX_BUFF_SIZE];
+    oscl_UTF8ToUnicode((const char *)filename, oscl_strlen((const char *) filename), (oscl_wchar *)output, MAX_BUFF_SIZE);
+    OSCL_wHeapString<OsclMemAllocator> wFilename(output);
+
+    //Check for QCelp (no SF support)
+    QCPErrorType    qcpErr;
+    IQcpFile qcpFile(wFilename, qcpErr);
+    if (qcpErr == QCP_SUCCESS) {
+        qcpErr = qcpFile.ParseQcpFile();
+        if (qcpErr == QCP_SUCCESS) {
+            LOGV("usePVPlayer: recognized qcelp or evrc file");
+            return OK;
+        }
+    }
+
+    //Check for clips with LPA implementation in PVPlayer
+    //First check if MP4 containing an aac audio stream
+    Oscl_FileServer iFs;
+
+    if (iFs.Connect() ==0) {
+        IMpeg4File *mp4Input = IMpeg4File::readMP4File(wFilename, NULL, NULL, 1, &iFs);
+        if (mp4Input)
+        {
+            LOGV("usePVPlayer: recognized mp4 container");
+            // check to see if the file contains video
+            uint64 duration;
+            uint32 timeScale;
+            int32 count = mp4Input->getNumTracks();
+            uint32* tracks = new uint32[count];
+            uint8 objectType;
+
+            if (tracks) {
+                mp4Input->getTrackIDList(tracks, count);
+                for (int i = 0; i < count; ++i) {
+                    OSCL_HeapString<OsclMemAllocator> streamtype;
+
+                    mp4Input->getTrackMIMEType(tracks[i], streamtype);
+                    if (streamtype.get_size()) {
+                        LOGV("usePVPlayer: got streamtype %s",streamtype.get_cstr());
+
+                        //MIME type X-MPEG4_AUDIO indicates AAC in MP4
+                        if (!LPAInstanceExists && streamtype==PVMF_MIME_MPEG4_AUDIO) {
+                            LOGV("usePVPlayer: recognized file as AAC in MP4");
+
+                            duration = mp4Input->getMovieDuration();
+                            timeScale =  mp4Input->getMovieTimescale();
+
+                            // adjust duration to milliseconds if necessary
+                            duration = (duration * 1000) / timeScale;
+                            LOGV("usePVPlayer: got duration of %llu milliseconds",duration);
+                            if (duration >= MIN_LPA_DURATION) {
+                                LPAInstanceExists = true;
+                                return OK;
+                            }
+                            else {
+                                LOGV("usePVPlayer: duration of aac too short to use LPA");
+                                return UNKNOWN_ERROR;
+                            }
+                        }
+                        else if (streamtype==PVMF_MIME_QCELP || streamtype==PVMF_MIME_EVRC) {
+                            LOGV("usePVPlayer: recognized qcelp or evrc file");
+                            return OK;
+                        }
+                    }
+                }
+            delete[] tracks;
+            }
+        }
+        iFs.Close();
+        IMpeg4File::DestroyMP4FileObject(mp4Input);
+    }
+
+    //Then check if MP3 of sufficient length
+    if (!LPAInstanceExists) {
+        MP3ErrorType mp3Err;
+
+        IMpeg3File mp3File(wFilename, mp3Err);
+        if (mp3Err == MP3_SUCCESS) {
+            mp3Err = mp3File.ParseMp3File();
+            if (mp3Err == MP3_SUCCESS) {
+                LOGV("usePVPlayer: recognized mp3 stream");
+                uint32 duration;
+
+                duration = mp3File.GetDuration();
+                LOGV("usePVPlayer: duration of mp3 %s is %d", filename, duration);
+                if (duration >= MIN_LPA_DURATION) {
+                    LPAInstanceExists = true;
+                    return OK;
+                }
+                else {
+                    LOGV("usePVPlayer: mp3 duration too short to use LPA");
+                    return UNKNOWN_ERROR;
+                }
+            }
+        }
+    }
+
+    //Then check if .aac of sufficient length
+    CAACFileParser aacParser;
+
+    if (aacParser.InitAACFile(wFilename)) {
+        TPVAacFileInfo aacInfo;
+        if (aacParser.RetrieveFileInfo(aacInfo)) {
+            LOGV("usePVPlayer: recognized .aac file");
+            return OK;
+        }
+    }
+
+    LOGV("usePVPlayer: unable to parse as aac, mp3, qcelp, or evrc; should ask for instance of stagefright player");
+    return UNKNOWN_ERROR;
+
+}
+
+// Wrapper for usePVPlayer(const char *filename) to enable opening the file with an fd
+// Static
+status_t PVPlayer::usePVPlayer(int fd, int64_t offset, int64_t length)
+{
+    LOGV("usePVPlayer: In usePVPlayer function, fd: %d, offset: %lld, length: %lld",fd,offset,length);
+
+    char buf[80];
+    sprintf(buf, "sharedfd://%d:%lld:%lld", fd, offset, length);
+    return usePVPlayer(buf);
 }
 
 } // namespace android

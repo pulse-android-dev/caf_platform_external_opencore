@@ -313,7 +313,7 @@ ChunkLargeOffsetAtom::getChunkClosestToOffset(uint32 offSet, int32& index)
             return (EVERYTHING_FINE);
         }
     }
-    return (INSUFFICIENT_DATA);
+    return (MP4_INSUFFICIENT_DATA);
 }
 
 

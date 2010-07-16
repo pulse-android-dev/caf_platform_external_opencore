@@ -491,7 +491,7 @@ IMpeg4File::IsProgressiveDownloadable(MP4_FF_FILE_REFERENCE filePtr,
 
     if (fileSize <= DEFAULT_ATOM_SIZE)
     {
-        return INSUFFICIENT_DATA;
+        return MP4_INSUFFICIENT_DATA;
     }
 
     int32 filePointer = AtomUtils::getCurrentFilePosition(fp);
@@ -506,7 +506,7 @@ IMpeg4File::IsProgressiveDownloadable(MP4_FF_FILE_REFERENCE filePtr,
 
     int32 fpos = 0;
 
-    MP4_ERROR_CODE mp4ErrorCode = INSUFFICIENT_DATA;
+    MP4_ERROR_CODE mp4ErrorCode = MP4_INSUFFICIENT_DATA;
 
     while ((uint32)(fpos + DEFAULT_ATOM_SIZE) < fileSize)
     {
@@ -593,7 +593,7 @@ IMpeg4File::GetMetaDataSize(PVMFCPMPluginAccessInterfaceFactory* aCPMAccessFacto
 
     if (fileSize <= DEFAULT_ATOM_SIZE)
     {
-        return INSUFFICIENT_DATA;
+        return MP4_INSUFFICIENT_DATA;
     }
 
     uint32 atomType          = UNKNOWN_ATOM;
@@ -603,7 +603,7 @@ IMpeg4File::GetMetaDataSize(PVMFCPMPluginAccessInterfaceFactory* aCPMAccessFacto
 
     int32 fpos = 0;
 
-    MP4_ERROR_CODE mp4ErrorCode = INSUFFICIENT_DATA;
+    MP4_ERROR_CODE mp4ErrorCode = MP4_INSUFFICIENT_DATA;
 
     while ((uint32)(fpos + DEFAULT_ATOM_SIZE) < fileSize)
     {

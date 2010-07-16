@@ -340,6 +340,7 @@ class Mpeg4File : public IMpeg4File, public Parentable
 
         // From SampleDescription
         int32 getTrackNumSampleEntries(uint32 id);
+        uint8 getObjectTypeIndication(uint32 id);
 
         void getTrackMIMEType(uint32 id, OSCL_String& aMimeType); // Based on OTI value
 
