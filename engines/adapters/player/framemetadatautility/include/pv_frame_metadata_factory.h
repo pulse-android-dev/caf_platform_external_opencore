@@ -61,7 +61,8 @@ class PVFrameAndMetadataFactory
                 PVCommandStatusObserver* aCmdStatusObserver,
                 PVErrorEventObserver *aErrorEventObserver,
                 PVInformationalEventObserver *aInfoEventObserver,
-                bool aHwAccelerate = true);
+                bool aHwAccelerate = true,
+                bool aThumbnailMode = false);
         /**
          * This function allows the application to delete an instance of a pvFrameAndMetadata utility
          * and reclaim all allocated resources.  An utility instance can be deleted only in

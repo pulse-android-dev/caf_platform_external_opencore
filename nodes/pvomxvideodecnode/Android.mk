@@ -26,6 +26,8 @@ LOCAL_C_INCLUDES := \
  	$(PV_TOP)/nodes/pvomxbasedecnode/src \
  	$(PV_INCLUDES)
 
+LOCAL_C_INCLUDES += $(TARGET_OUT_HEADERS)/mm-core/omxcore
+
 LOCAL_COPY_HEADERS_TO := $(PV_COPY_HEADERS_TO)
 
 LOCAL_COPY_HEADERS := \

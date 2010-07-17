@@ -196,6 +196,7 @@ private:
     // Deinterlacing Chroma values
     void deinterlaceChroma();
     bool aHwAccelerated;
+    bool aThumbnailMode;
 };
 
 }; // namespace android

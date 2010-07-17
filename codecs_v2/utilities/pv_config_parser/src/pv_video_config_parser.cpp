@@ -144,14 +144,15 @@ OSCL_EXPORT_REF int16 pv_video_config_parser(pvVideoConfigParserInputs *aInputs,
                                    (int*) & display_height,
                                    (int*) & profile_idc,
                                    (int*) & level_idc);
-        if (retval != 0)
-        {
-            return retval;
-        }
+
         aOutputs->width  = (uint32)display_width;
         aOutputs->height = (uint32)display_height;
         aOutputs->profile = (uint32)profile_idc;
         aOutputs->level = (uint32) level_idc;
+        if (retval != 0)
+        {
+            return retval;
+        }
     }
     else if (aInputs->iMimeType == PVMF_MIME_WMV) //wmv
     {

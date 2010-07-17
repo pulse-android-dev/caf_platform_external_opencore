@@ -412,7 +412,8 @@ class PVFrameAndMetadataUtility : public OsclTimerObject,
                                               PVCommandStatusObserver *aCmdObserver,
                                               PVErrorEventObserver *aErrorObserver,
                                               PVInformationalEventObserver *aInfoObserver,
-                                              bool aHwAccelerated = true);
+                                              bool aHwAccelerated = true,
+                                              bool aThumbnailMode = false);
         ~PVFrameAndMetadataUtility();
 
         // From PVFrameAndMetadataInterface
@@ -448,7 +449,7 @@ class PVFrameAndMetadataUtility : public OsclTimerObject,
         bool iHwAccelerated;
         PVMFBasicErrorInfoMessage* CreateBasicErrInfoMessage(PVMFErrorInfoMessageInterface* nextmsg, PVFMErrorEventType aErrEvent = PVFMErrPlayerEngine);
 
-        PVFrameAndMetadataUtility(bool aHwAccelerated);
+        PVFrameAndMetadataUtility(bool aHwAccelerated, bool aThumbnailMode);
         void Construct(char *aOutputFormatMIMEType,
                        PVCommandStatusObserver *aCmdObserver,
                        PVErrorEventObserver *aErrorObserver,
@@ -668,6 +669,8 @@ class PVFrameAndMetadataUtility : public OsclTimerObject,
 
         uint32 iThumbnailWidth;
         uint32 iThumbnailHeight;
+
+        bool iThumbnailMode;
 };
 
 #endif // PV_FRAME_METADATA_UTILITY_H_INCLUDED

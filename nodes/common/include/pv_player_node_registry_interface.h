@@ -119,7 +119,7 @@ class PVPlayerNodeRegistryInterface
          *
          * @returns a pointer to node
          **/
-        virtual PVMFNodeInterface* CreateNode(PVUuid& aUuid, bool aHwAccelerated = true) = 0;
+        virtual PVMFNodeInterface* CreateNode(PVUuid& aUuid, bool aHwAccelerated = true, bool aThumbnailMode = false) = 0;
 
         /**
          * The ReleaseNode for PVPlayerNodeRegistry. Used for releasing a node.
@@ -130,6 +130,7 @@ class PVPlayerNodeRegistryInterface
          *
          * @returns True or False
          **/
+
         virtual bool ReleaseNode(PVUuid& aUuid, PVMFNodeInterface *aNode) = 0;
 
         /**

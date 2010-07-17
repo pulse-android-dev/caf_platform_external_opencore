@@ -32,6 +32,8 @@
 #include "pv_omxcore.h"
 #include "OMX_Video.h"
 
+#include "OMX_QCOMExtns.h"
+
 #include "utils/Log.h"
 #undef LOG_TAG
 #define LOG_TAG "PVOMXVidDecNode"
@@ -138,8 +140,8 @@ PVMFStatus PVMFOMXVideoDecNode::ThreadLogon()
 /////////////////////////////////////////////////////////////////////////////
 // Class Constructor
 /////////////////////////////////////////////////////////////////////////////
-PVMFOMXVideoDecNode::PVMFOMXVideoDecNode(int32 aPriority, bool aHwAccelerated) :
-        PVMFOMXBaseDecNode(aPriority, "PVMFOMXVideoDecNode", aHwAccelerated),
+PVMFOMXVideoDecNode::PVMFOMXVideoDecNode(int32 aPriority, bool aHwAccelerated, bool aThumbnailMode) :
+        PVMFOMXBaseDecNode(aPriority, "PVMFOMXVideoDecNode", aHwAccelerated, aThumbnailMode),
         iH263MaxBitstreamFrameSize(PVOMXVIDEODECNODE_CONFIG_H263MAXBITSTREAMFRAMESIZE_DEF),
         iH263MaxWidth(PVOMXVIDEODECNODE_CONFIG_H263MAXWIDTH_DEF),
         iH263MaxHeight(PVOMXVIDEODECNODE_CONFIG_H263MAXHEIGHT_DEF),
@@ -201,6 +203,8 @@ PVMFOMXVideoDecNode::PVMFOMXVideoDecNode(int32 aPriority, bool aHwAccelerated) :
     iH264FragSize = 0;
     iH264InitBuffer = NULL;
     iH264InitBufSize = 0;
+
+    bThumbnailMode = aThumbnailMode;
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -574,6 +578,16 @@ bool PVMFOMXVideoDecNode::NegotiateComponentParameters(OMX_PTR aOutputParameters
         PVLOGGER_LOGMSG(PVLOGMSG_INST_LLDBG, iLogger, PVLOGMSG_STACK_TRACE,
                         (0, "PVMFOMXVideoDecNode::NegotiateComponentParameters() There is insuffucient (%d) ports", NumPorts));
         return false;
+    }
+
+    QOMX_ENABLETYPE enableType;
+    OMX_INDEXTYPE indexType;
+
+    enableType.bEnable = OMX_TRUE;
+
+    if(bThumbnailMode) {
+        OMX_GetExtensionIndex(iOMXDecoder, OMX_QCOM_INDEX_PARAM_VIDEO_SYNCFRAMEDECODINGMODE, &indexType);
+        OMX_SetParameter(iOMXDecoder, (OMX_INDEXTYPE)indexType, &enableType);
     }
 
 

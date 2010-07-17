@@ -48,9 +48,10 @@ OSCL_EXPORT_REF PVFrameAndMetadataInterface *PVFrameAndMetadataFactory::CreateFr
         PVCommandStatusObserver* aCmdStatusObserver,
         PVErrorEventObserver *aErrorEventObserver,
         PVInformationalEventObserver *aInfoEventObserver,
-        bool aHwAccelerated)
+        bool aHwAccelerated,
+        bool aThumbnailMode)
 {
-    return PVFrameAndMetadataUtility::New(aOutputFormatMIMEType, aCmdStatusObserver, aErrorEventObserver, aInfoEventObserver, aHwAccelerated);
+    return PVFrameAndMetadataUtility::New(aOutputFormatMIMEType, aCmdStatusObserver, aErrorEventObserver, aInfoEventObserver, aHwAccelerated, aThumbnailMode);
 }
 
 

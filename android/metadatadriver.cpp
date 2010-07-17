@@ -561,7 +561,8 @@ void MetadataDriver::handleCreate()
     LOGV("handleCreate");
     int error = 0;
     aHwAccelerated = false;
-    OSCL_TRY(error, mUtil = PVFrameAndMetadataFactory::CreateFrameAndMetadataUtility((char*)PVMF_MIME_YUV420, this, this, this, aHwAccelerated));
+    aThumbnailMode = true;
+    OSCL_TRY(error, mUtil = PVFrameAndMetadataFactory::CreateFrameAndMetadataUtility((char*)PVMF_MIME_YUV420, this, this, this, aHwAccelerated, aThumbnailMode));
     if (error || mUtil->SetMode(PV_FRAME_METADATA_INTERFACE_MODE_SOURCE_METADATA_AND_THUMBNAIL) != PVMFSuccess) {
         handleCommandFailure();
     } else {

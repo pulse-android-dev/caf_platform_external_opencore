@@ -900,7 +900,8 @@ class PVPlayerEngine : public OsclTimerObject,
         static PVPlayerEngine* New(PVCommandStatusObserver *aCmdObserver,
                                    PVErrorEventObserver *aErrorObserver,
                                    PVInformationalEventObserver *aInfoObserver,
-                                   bool aHwAccelerated);
+                                   bool aHwAccelerated,
+                                   bool aThumbnailMode);
         ~PVPlayerEngine();
 
         // From PVPlayerInterface
@@ -976,7 +977,7 @@ class PVPlayerEngine : public OsclTimerObject,
         void PVPlayerWatchdogTimerEvent();
 
     private:
-        PVPlayerEngine(bool aHwAccelerated);
+        PVPlayerEngine(bool aHwAccelerated, bool aThumbnailMode);
         void Construct(PVCommandStatusObserver *aCmdObserver,
                        PVErrorEventObserver *aErrorObserver,
                        PVInformationalEventObserver *aInfoObserver);
@@ -1593,6 +1594,8 @@ class PVPlayerEngine : public OsclTimerObject,
 
         PVPPlaybackPositionMode iPlaybackPositionMode;
         bool iOverflowFlag;
+
+        bool iThumbnailMode;
 };
 
 /**

@@ -130,7 +130,7 @@ class PVMFOMXVideoDecNode
         : public PVMFOMXBaseDecNode
 {
     public:
-        PVMFOMXVideoDecNode(int32 aPriority, bool aHwAccelerated);
+        PVMFOMXVideoDecNode(int32 aPriority, bool aHwAccelerated, bool aThumbnailMode);
         ~PVMFOMXVideoDecNode();
 
         // From PVMFNodeInterface
@@ -213,6 +213,8 @@ class PVMFOMXVideoDecNode
         uint8* iH264InitBuffer;
         int32 iH264InitBufSize;
         uint16 iH264FragSize;
+
+        bool bThumbnailMode;
 };
 
 

@@ -35,10 +35,10 @@ OSCL_DLL_ENTRY_POINT_DEFAULT()
 
 
 ////////////////////////////////////////////////////////////////////////////
-OSCL_EXPORT_REF PVMFNodeInterface* PVMFOMXVideoDecNodeFactory::CreatePVMFOMXVideoDecNode(int32 aPriority, bool aHwAccelerated)
+OSCL_EXPORT_REF PVMFNodeInterface* PVMFOMXVideoDecNodeFactory::CreatePVMFOMXVideoDecNode(int32 aPriority, bool aHwAccelerated, bool aThumbnailMode)
 {
     PVMFNodeInterface* node = NULL;
-    node = new PVMFOMXVideoDecNode(aPriority, aHwAccelerated);
+    node = new PVMFOMXVideoDecNode(aPriority, aHwAccelerated, aThumbnailMode);
     if (node == NULL)
     {
         OSCL_LEAVE(OsclErrNoMemory);

@@ -118,7 +118,7 @@ class PVPlayerNodeRegistry : public PVPlayerNodeRegistryInterface
          *
          * @returns a pointer to node
          **/
-        virtual PVMFNodeInterface* CreateNode(PVUuid& aUuid, bool aHwAccelerated);
+        virtual PVMFNodeInterface* CreateNode(PVUuid& aUuid, bool aHwAccelerated, bool aThumbnailMode);
 
         /**
          * The ReleaseNode for PVPlayerNodeRegistry. Used for releasing a node.

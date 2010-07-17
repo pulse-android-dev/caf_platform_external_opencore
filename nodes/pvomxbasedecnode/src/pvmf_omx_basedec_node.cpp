@@ -52,6 +52,12 @@
 #define JJLOGE(id, ...) LOGE(__VA_ARGS__)
 #endif
 
+#include "avcapi_common.h"
+#include <cutils/properties.h>
+#define H263_THUMBNAIL_HW_THRESHOLD_HEIGHT 480
+#define H263_THUMBNAIL_HW_THRESHOLD_WIDTH 640
+#define ADVANCE_SIMPLE_PROFILE_LEVEL0 240
+
 // OMX CALLBACKS
 // 1) AO OMX component running in the same thread as the OMX node
 //  In this case, the callbacks can be called directly from the component
@@ -530,7 +536,7 @@ OSCL_EXPORT_REF PVMFStatus PVMFOMXBaseDecNode::SetDecoderNodeConfiguration(PVMFO
 /////////////////////////////////////////////////////////////////////////////
 // Class Constructor
 /////////////////////////////////////////////////////////////////////////////
-OSCL_EXPORT_REF PVMFOMXBaseDecNode::PVMFOMXBaseDecNode(int32 aPriority, const char aAOName[], bool accelerated) :
+OSCL_EXPORT_REF PVMFOMXBaseDecNode::PVMFOMXBaseDecNode(int32 aPriority, const char aAOName[], bool accelerated, bool thumbnailmode) :
         OsclActiveObject(aPriority, aAOName),
         iInPort(NULL),
         iOutPort(NULL),
@@ -560,6 +566,7 @@ OSCL_EXPORT_REF PVMFOMXBaseDecNode::PVMFOMXBaseDecNode(int32 aPriority, const ch
         iStopInResetMsgSent(false),
         iCompactFSISettingSucceeded(false),
         bHWAccelerated(accelerated? OMX_TRUE: OMX_FALSE),
+        bThumbnailMode(thumbnailmode? OMX_TRUE: OMX_FALSE),
         ipPMemBufferAlloc(NULL)
 {
     iThreadSafeHandlerEventHandler = NULL;
@@ -4232,6 +4239,17 @@ void PVMFOMXBaseDecNode::DoPrepare(PVMFOMXBaseDecNodeCommand& aCmd)
                     status = OMX_MasterConfigParser(&aInputParameters, aOutputParameters);
                     if (status == OMX_TRUE)
                     {
+                        char value[PROPERTY_VALUE_MAX];
+                        property_get("ro.product.device",value,"0");
+                        if(strcmp("qsd8250_ffa",value) == 0 || strcmp("qsd8250_surf",value) == 0)
+                        {
+                            if(checkHWAccelconditions(aInputParameters.cComponentRole, ((VideoOMXConfigParserOutputs *)aOutputParameters)->profile))
+                            {
+                                ii=-1;
+                                continue;
+                            }
+                        }
+
                         // but also needs to valid long enough to use it when getting the number of roles later on
                         oscl_strncpy((OMX_STRING)CompName, (OMX_STRING) CompOfRole[ii], PV_OMX_MAX_COMPONENT_NAME_LENGTH);
 //JJDBG
@@ -4239,7 +4257,6 @@ void PVMFOMXBaseDecNode::DoPrepare(PVMFOMXBaseDecNodeCommand& aCmd)
                         if ((0 == oscl_strncmp(aInputParameters.cComponentName, "OMX.qcom.video.decoder.mpeg4", PV_OMX_MAX_COMPONENT_NAME_LENGTH))
                                 || (0 == oscl_strncmp(aInputParameters.cComponentName, "OMX.qcom.video.decoder.h263", PV_OMX_MAX_COMPONENT_NAME_LENGTH)))
                         {
-                            LOGE("%s::DoPrepare(): Cannot get component %s handle, try another component if available", iName.Str(), aInputParameters.cComponentName);
                             continue;
                             //err = OMX_ErrorUndefined ;
                         }
@@ -4273,6 +4290,17 @@ void PVMFOMXBaseDecNode::DoPrepare(PVMFOMXBaseDecNodeCommand& aCmd)
                     }
                     else
                     {
+
+                        char value[PROPERTY_VALUE_MAX];
+                        property_get("ro.product.device",value,"0");
+                        if(strcmp("qsd8250_ffa",value) == 0 || strcmp("qsd8250_surf",value) == 0)
+                        {
+                            if(checkHWAccelconditions(aInputParameters.cComponentRole, ((VideoOMXConfigParserOutputs *)aOutputParameters)->profile))
+                            {
+                                ii = -1;
+                                continue;
+                            }
+                        }
                         status = OMX_FALSE;
                     }
 
@@ -6016,6 +6044,27 @@ OSCL_EXPORT_REF void PVMFOMXBaseDecNode::setParametersSync(PvmiMIOSession aSessi
     PVLOGGER_LOGMSG(PVLOGMSG_INST_LLDBG, iLogger, PVLOGMSG_STACK_TRACE, (0, "%s::setParametersSync()", iName.Str()));
     OSCL_UNUSED_ARG(aSession);
 
+    for(int32 i; i< aNumElements; ++i)
+    {
+        int compcount = pv_mime_string_compcnt(aParameters[i].key);
+        char* compstr = NULL;
+        pv_mime_string_extract_type(0, aParameters[i].key, compstr);
+        if ((pv_mime_strcmp(compstr, _STRLIT_CHAR("x-pvmf/video/render")) > 0) && compcount == 4)
+        {
+            char* compstr2 = NULL;
+            pv_mime_string_extract_type(3, aParameters[i].key, compstr2);
+
+            if (pv_mime_strcmp(compstr2, "width") == 0)
+            {
+                video_width = aParameters[i].value.uint32_value;
+            }
+            else if (pv_mime_strcmp(compstr2, "height") == 0)
+            {
+                video_height = aParameters[i].value.uint32_value;
+            }
+        }
+    }
+
     // Complete the request synchronously
     DoCapConfigSetParameters(aParameters, aNumElements, aRetKVP);
 }
@@ -6218,6 +6267,24 @@ OSCL_EXPORT_REF OsclAny* PVMFOMXBaseDecNode::AllocateKVPKeyArray(int32& aLeaveCo
     return aBuffer;
 }
 
+OSCL_EXPORT_REF bool PVMFOMXBaseDecNode::checkHWAccelconditions(OMX_STRING role, OMX_U32 profile)
+{
+    if(bThumbnailMode && !bHWAccelerated)
+    { // sw decoder cannot handle these profiles/levels
+        if(((0 == oscl_strcmp(role, (OMX_STRING)"video_decoder.h263")) &&
+           ((video_height >= H263_THUMBNAIL_HW_THRESHOLD_HEIGHT) &&
+           (video_width >= H263_THUMBNAIL_HW_THRESHOLD_WIDTH))) ||
+           ((0 == oscl_strcmp(role, (OMX_STRING)"video_decoder.mpeg4")) &&
+           profile >= ADVANCE_SIMPLE_PROFILE_LEVEL0) ||
+           ((0 == oscl_strcmp(role, (OMX_STRING)"video_decoder.avc")) &&
+           profile > AVC_BASELINE))
+        {
+            bHWAccelerated = OMX_TRUE; //so we'll use hardware decoder instead
+            return true;
+        }
+    }
+    return false;
+}
 #undef PVLOGGER_LOGMSG
 #define PVLOGGER_LOGMSG(IL, LOGGER, LEVEL, MESSAGE) OSCL_UNUSED_ARG(LOGGER);
 
