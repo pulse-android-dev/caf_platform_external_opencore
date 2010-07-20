@@ -1,5 +1,5 @@
 /* ------------------------------------------------------------------
- * Copyright (C) 1998-2009 PacketVideo
+ * Copyright (C) 1998-2010 PacketVideo
  * Copyright (c) 2009, Code Aurora Forum. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -171,6 +171,7 @@ const uint32    MEDIA_TYPE_TEXT = FourCharConstToUint32('t', 'e', 'x', 't');
 
 const uint32    MPEG_SAMPLE_ENTRY = FourCharConstToUint32('m', 'p', '4', 's');
 const uint32    AUDIO_SAMPLE_ENTRY = FourCharConstToUint32('m', 'p', '4', 'a');
+const uint32    MP3_SAMPLE_ENTRY = FourCharConstToUint32('.', 'm', 'p', '3');
 const uint32    VIDEO_SAMPLE_ENTRY = FourCharConstToUint32('m', 'p', '4', 'v');
 
 const uint32    AMR_SAMPLE_ENTRY_ATOM = FourCharConstToUint32('s', 'a', 'm', 'r');
@@ -368,6 +369,7 @@ typedef enum
     TIMED_TEXT  = 0xFD,
     MPEG4_SYS_OD = 0x01,
     MPEG4_SYS_BIFS = 0x01,
+    MP3_AUDIO = 0X68, /* AUDIO 11172-3, 13818-3. Refer to Tab8 "objectTypeIndication" in DecoderConfigDescriptor */
     TYPE_UNKNOWN = 0
 
 } OTI_VALUES;

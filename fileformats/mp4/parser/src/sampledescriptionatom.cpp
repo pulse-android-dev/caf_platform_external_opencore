@@ -1,5 +1,5 @@
 /* ------------------------------------------------------------------
- * Copyright (C) 1998-2009 PacketVideo
+ * Copyright (C) 1998-2010 PacketVideo
  * Copyright (c) 2009, Code Aurora Forum. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -75,6 +75,7 @@ SampleDescriptionAtom::SampleDescriptionAtom(MP4_FF_FILE *fp,
     _o3GPP2QCELP = false;
     _o3GPP2EVRC = false;
     _oAVC = false;
+    _oMP3 = false;
 
 
     uint32 count = size - DEFAULT_ATOM_SIZE;
@@ -283,9 +284,17 @@ SampleDescriptionAtom::SampleDescriptionAtom(MP4_FF_FILE *fp,
                                 return;
                             }
                         }
-                        else if (atomType == AUDIO_SAMPLE_ENTRY)
+                        else if ((atomType == (AUDIO_SAMPLE_ENTRY) || (atomType == (MP3_SAMPLE_ENTRY))))
                         {
-                            PV_MP4_FF_NEW(fp->auditCB, AudioSampleEntry, (fp, atomSize, atomType), entry);
+                            if((atomType == (MP3_SAMPLE_ENTRY)))
+                            {
+                                _oMP3 = true;
+                                PV_MP4_FF_NEW(fp->auditCB, AudioSampleEntry, (fp, atomSize, atomType, true), entry);
+                            }
+                            else
+                            {
+                                PV_MP4_FF_NEW(fp->auditCB, AudioSampleEntry, (fp, atomSize, atomType, false), entry);
+                            }
                             if (!entry->MP4Success())
                             {
                                 _success = false;
@@ -700,6 +709,8 @@ uint8  SampleDescriptionAtom::getObjectTypeIndication()
 
     if (_oAVC)
         return (AVC_VIDEO);
+    if (_oMP3)
+        return (MP3_AUDIO);
 
     // ok to continue if size()==0, will be
     // caught on MEDIA_TYPE_AUDIO and MEDIA_TYPE_VISUAL
@@ -1011,6 +1022,10 @@ void SampleDescriptionAtom::getMIMEType(OSCL_String& aMimeType)
     else if (objectType == AVC_VIDEO)
     {
         mimeType.set(PVMF_MIME_H264_VIDEO_MP4, oscl_strlen(PVMF_MIME_H264_VIDEO_MP4));
+    }
+    else if (objectType == MP3_AUDIO)
+    {
+        mimeType.set(PVMF_MIME_MP3, oscl_strlen(PVMF_MIME_MP3));
     }
     else
     {
