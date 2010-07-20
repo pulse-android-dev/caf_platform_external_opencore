@@ -611,13 +611,6 @@ void AuthorDriver::handleSetAudioEncoder(set_audio_encoder_command *ac)
 
     LOGV("AuthorDriver::handleSetAudioEncoder() set %d %d \"%s\"", mSamplingRate, mNumberOfChannels, iAudioEncoderMimeType.get_cstr());
 
-    // Set the sampling rate and number of channels
-    if (!mAudioInputMIO->setAudioSamplingRate(mSamplingRate))
-    {
-        LOGE("Failed to set the sampling rate %d", mSamplingRate);
-        commandFailed(ac);
-        return;
-    }
     if (!mAudioInputMIO->setAudioNumChannels(mNumberOfChannels))
     {
         LOGE("Failed to set the number of channels %d", mNumberOfChannels);
@@ -628,6 +621,14 @@ void AuthorDriver::handleSetAudioEncoder(set_audio_encoder_command *ac)
     if (!mAudioInputMIO->setAudioFormatType(iAudioFormat))
     {
         LOGE("Compressed Audio Input not supported %s", iAudioFormat);
+        commandFailed(ac);
+        return;
+    }
+
+    // Set the sampling rate moved to end to check for format type in MIO.
+    if (!mAudioInputMIO->setAudioSamplingRate(mSamplingRate))
+    {
+        LOGE("Failed to set the sampling rate %d", mSamplingRate);
         commandFailed(ac);
         return;
     }

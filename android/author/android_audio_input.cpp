@@ -704,6 +704,19 @@ bool AndroidAudioInput::setAudioSamplingRate(int32 iSamplingRate)
         return false;
     }
 
+#ifdef SURF
+    // AAC does not support voice call recording on 7x27.
+    // If AAC recording is started in voice call, the default sampling rate / if
+    // application requested SR is not equal to 8K, then fail the recording.
+    // This is firmware limitation.
+    if ( (true == AudioSystem::isModeInCall()) &&
+         (iAudioFormatType == android::AudioSystem::AAC) &&
+         (iSamplingRate != 8000) )
+    {
+        return false;
+    }
+#endif
+
     iAudioSamplingRate = iSamplingRate;
     LOGV("AndroidAudioInput::setAudioSamplingRate() iAudioSamplingRate %d set", iAudioSamplingRate);
     return true;
