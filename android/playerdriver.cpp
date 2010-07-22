@@ -324,6 +324,7 @@ class PlayerDriver :
     bool                    mSeekComp;
     bool                    mSeekPending;
     bool                    mIsLiveStreaming;
+    bool                    mIsADIF;
     bool                    mEmulation;
     bool                    mContentLengthKnown;
     void*                   mLibHandle;
@@ -353,6 +354,7 @@ PlayerDriver::PlayerDriver(PVPlayer* pvPlayer) :
         mSeekComp(true),
         mSeekPending(false),
         mIsLiveStreaming(false),
+        mIsADIF(false),
         mEmulation(false),
         mContentLengthKnown(false),
         mLastBufferingLog(0),
@@ -728,6 +730,20 @@ void PlayerDriver::handleSetDataSource(PlayerSetDataSource* command)
         delete mDataSource;
         mDataSource = NULL;
     }
+    char strfd[3]={url[11],url[12],'\0'};
+    int urlfd = atoi (strfd);
+
+    char bufchk[20];
+    lseek(urlfd, 0, SEEK_SET);
+    read(urlfd, bufchk, sizeof(bufchk));
+    lseek(urlfd, 0, SEEK_SET);
+
+    long ident = *((long*)bufchk);
+
+    if (ident == 0x46494441) // For ADIF check
+    {
+        mIsADIF = true;
+    }
 
     // Create a URL datasource to feed PVPlayer
     mDataSource = new PVPlayerDataSourceURL();
@@ -1018,6 +1034,12 @@ void PlayerDriver::handleSeek(PlayerSeek* command)
     LOGV("handleSeek");
     // Cache the most recent seek request
     mRecentSeek = command->msec();
+    if (mRecentSeek && mIsADIF) {
+       LOGW("Seek denied");
+       mPvPlayer->sendEvent(MEDIA_SEEK_COMPLETE);
+       FinishSyncCommand(command);
+       return;
+    }
     // Seeking in the pause state
     PVPlayerState state;
     if (mPlayer->GetPVPlayerStateSync(state) == PVMFSuccess
