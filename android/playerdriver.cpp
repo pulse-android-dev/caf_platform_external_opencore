@@ -755,6 +755,8 @@ void PlayerDriver::handleSetDataSource(PlayerSetDataSource* command)
         mDataSource->SetDataSourceFormatType((const char*)PVMF_MIME_DATA_SOURCE_RTSP_URL);
     } else if (strncmp(url, "isdb:", strlen("isdb:")) == 0) {
         mDataSource->SetDataSourceFormatType((const char*)PVMF_MIME_DATA_SOURCE_ISDBT);
+    } else if (strncmp(url, "mdsc:", strlen("mdsc:")) == 0) {
+        mDataSource->SetDataSourceFormatType((const char*)PVMF_MIME_DATA_SOURCE_MFLO);
     } else if (strncmp(url, "http:", strlen("http:")) == 0) {
         if (0!=setupHttpStreamPre())
         {

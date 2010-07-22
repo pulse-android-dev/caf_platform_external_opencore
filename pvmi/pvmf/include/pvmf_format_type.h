@@ -172,6 +172,7 @@ typedef OSCL_String PvmfMimeString;
 #define PVMF_MIME_DATA_SOURCE_UNKNOWN_URL "X-PVMF-DATA-SRC-UNKNOWN-URL"
 
 #define PVMF_MIME_DATA_SOURCE_ISDBT "X-PVMF-DATA-SRC-ISDBT"
+#define PVMF_MIME_DATA_SOURCE_MFLO "X-PVMF-DATA-SRC-MFLO"
 
 // MIME string for miscellaneous media data formats
 #define PVMF_MIME_3GPP_TIMEDTEXT        "video/3gpp-tt"
