@@ -17,6 +17,9 @@
  */
 #include "pvmf_protocol_engine_progressive_download.h"
 
+/*Donot send connection close header in GET  */
+//#define SEND_CONNECTION_CLOSE
+
 //////  ProgressiveDownloadState_HEAD implementation ////////////////////////////
 OSCL_EXPORT_REF void ProgressiveDownloadState_HEAD::setRequestBasics()
 {
@@ -78,6 +81,7 @@ OSCL_EXPORT_REF bool ProgressiveDownloadState_GET::setHeaderFields()
     if (!ProtocolState::constructAuthenHeader(iCfgFile->GetUserId(), iCfgFile->GetUserAuth())) return false;
     if (!DownloadState::setHeaderFields()) return false;
 
+#ifdef SEND_CONNECTION_CLOSE
     // change "Connection" field
     StrCSumPtrLen connectionKey = "Connection";
     char *nullPtr = NULL; // remove "Connection" field
@@ -85,7 +89,7 @@ OSCL_EXPORT_REF bool ProgressiveDownloadState_GET::setHeaderFields()
     // reset "Connection: Close"
     StrPtrLen  connectionValue = "Close";
     if (!iComposer->setField(connectionKey, &connectionValue)) return false;
-
+#endif
 
     return setExtensionFields(iCfgFile->getExtensionHeaderKeys(),
                               iCfgFile->getExtensionHeaderValues(),

@@ -17,6 +17,9 @@
  */
 #include "pvmf_protocol_engine_download_common.h"
 
+/*Enable this if connection keep_alive header is required in GET*/
+
+//#define SEND_CONNECTION_KEEPALIVE
 ////////////////////////////////////////////////////////////////////////////////////
 //////  DownloadState related implementation
 ////////////////////////////////////////////////////////////////////////////////////
@@ -61,11 +64,12 @@ OSCL_EXPORT_REF bool DownloadState::setHeaderFields()
     fieldKey.setPtrLen(fieldKeyString.get_str(), fieldKeyString.get_size());
     if (!iComposer->setField(fieldKey, (iCfgFile->GetUserAgent()).get_cstr())) return false;
 
+#ifdef SEND_CONNECTION_KEEPALIVE
     fieldKeyString.set((OSCL_String::chartype*)_STRLIT_CHAR("Connection"), 16);
     OSCL_FastString fieldValueString(_STRLIT_CHAR("Keep-Alive"));
     fieldKey.setPtrLen(fieldKeyString.get_cstr(), fieldKeyString.get_size());
     if (!iComposer->setField(fieldKey, fieldValueString.get_cstr())) return false;
-
+#endif
     return true;
 }
 
