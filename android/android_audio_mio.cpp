@@ -156,13 +156,11 @@ PvmiMediaTransfer* AndroidAudioMIO::createMediaTransfer(PvmiMIOSession& aSession
     {
         iWriteCompleteAO = OSCL_NEW(AndroidAudioOutputThreadSafeCallbackAO,(this, 5));
     }
-    // Ravi: Commeting for now, because of LPA dependent changes in frameworks and HAL
-#if 0
     else
     {
        iWriteCompleteAO = OSCL_NEW(AndroidAudioLPADecodeThreadSafeCallbackAO,(this, 5));
     }
-#endif
+
     PVLOGGER_LOGMSG(PVLOGMSG_INST_LLDBG, iLogger, PVLOGMSG_STACK_TRACE, (0,"AndroidAudioMIO::createMediaTransfer() called"));
     return (PvmiMediaTransfer*)this;
 }
@@ -474,17 +472,12 @@ PVMFCommandId AndroidAudioMIO::writeAsync(uint8 aFormatType, int32 aFormatIndex,
         iWriteResponseQueueLock.Unlock();
         RunIfNotReady();
     } else if (!iWriteBusy) {
-	// Ravi: Commenting LPA for now
-#if 0
         if (bIsAudioLPADecode) {
             writeAudioLPABuffer(aData, aDataLen, cmdid, aContext, aTimestamp, data_header_info.pmem_fd);
         }
         else {
             writeAudioBuffer(aData, aDataLen, cmdid, aContext, aTimestamp);
         }
-#else
-		writeAudioBuffer(aData, aDataLen, cmdid, aContext, aTimestamp);
-#endif
     }
     LOGV("data queued = %u", iDataQueued);
 

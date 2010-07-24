@@ -440,6 +440,10 @@ PVMFCommandId AndroidAudioLPADecode::Pause(const OsclAny* aContext)
         // This is checked explicity because, the Hardware can also be put to
         // Pause state after EOS occurs
         if ( iHwState ==  STATE_HW_PAUSED ) {
+
+            LOGV("Pausing the session");
+            mAudioSink->pauseSession();
+
             LOGV("Start a Timer to honor TCXO shutdown");
             // Start a timer - To put the device into TCXO shutdown
             iTimeoutTimer->Request(ANDROID_AUDIO_LPADEC_TIMERID, 0, ANDROID_AUDIO_LPADEC_SUSPEND_TIMEOUT, this, false);
@@ -455,6 +459,10 @@ PVMFCommandId AndroidAudioLPADecode::Start(const OsclAny* aContext)
     if ( !bIsA2DPEnabled && iAudioThreadCreatedAndMIOConfigured ) {
         if ( iState == STATE_MIO_PAUSED ) {
             if ( !bSuspendEventRxed && iHwState == STATE_HW_PAUSED ) {
+
+                LOGV("AndroidAudioLPADecode::Start - Resuming Session");
+                mAudioSink->resumeSession();
+
                 LOGV("AndroidAudioLPADecode::Start - Resuming Driver");
                 ioctl(afd, AUDIO_PAUSE, 0);
             } else {
@@ -1173,7 +1181,7 @@ int AndroidAudioLPADecode::audout_thread_func()
                 bEOS = true;
                 if ( iHwState != STATE_HW_PAUSED ) {
                     LOGV("Calling fsync");
-                    if ( (fsync(afd) < 0) && iHwState == STATE_HW_STOPPED )
+                    if ( !iExitAudioThread && (fsync(afd) < 0) && iHwState == STATE_HW_STOPPED )
                     {
                         LOGV("Fsync failed because the h/w is stopped in Fsync");
                         bEOS = false;
