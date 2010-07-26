@@ -744,8 +744,7 @@ bool AndroidAudioInput::setAudioFormatType(char *iAudioFormat)
       LOGE("Rx Voice call recording is not supported on 8K");
       return false;
   }
-#endif
-
+#else
   // Check for the support of this Codec with the Source. If this codec cannot
   // support other than MIC recording, return error
   // MPEG4_AUDIO supports only MIC recording
@@ -758,6 +757,7 @@ bool AndroidAudioInput::setAudioFormatType(char *iAudioFormat)
       }
 
   }
+#endif
 
   // Get supported output formats
   PVMFStatus status = getParametersSync(NULL, OUTPUT_FORMATS_CAP_QUERY, kvp, numParams, NULL);
