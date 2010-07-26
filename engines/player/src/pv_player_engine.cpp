@@ -8776,12 +8776,11 @@ PVMFStatus PVPlayerEngine::DoResume(PVPlayerEngineCommand& aCmd)
         return PVMFErrInvalidState;
     }
 
-    // Disallow resume when paused due to EOS and position/direction
+    // Allow resume when paused due to EOS and position/direction
     // hasn't been changed
     if (iPlaybackPausedDueToEndOfClip)
     {
-        PVLOGGER_LOGMSG(PVLOGMSG_INST_HLDBG, iLogger, PVLOGMSG_ERR, (0, "PVPlayerEngine::DoResume() Currently paused due to EOS so not allowed!"));
-        return PVMFErrInvalidState;
+        iPlaybackPausedDueToEndOfClip = false;
     }
 
     PVMFStatus retval;
