@@ -68,7 +68,8 @@ OSCL_EXPORT_REF PV_LATM_Parser::PV_LATM_Parser() :
         firstSMC(true),
         startedParsing(false),
         framePos(NULL),
-        frameCount(0)
+        frameCount(0),
+        frameSeqNum(0)
 {
     multiFrameBuf = (uint8 *) oscl_calloc(currSize, sizeof(uint8));
 
@@ -133,7 +134,7 @@ OSCL_EXPORT_REF uint8 PV_LATM_Parser::compose(PVMFSharedMediaDataPtr& mediaDataI
     int errcode = 0;
     OsclSharedPtr<PVMFMediaDataImpl> mediaDataImpl;
 #ifndef LATM_PARSE_MULTIPLE_FRAGMENTS
-    OSCL_TRY_NO_TLS(iOsclErrorTrapImp, errcode, mediaDataImpl = iMediaDataSimpleAlloc.allocate((uint32)memFragIn.getMemFrag().len));
+    OSCL_TRY_NO_TLS(iOsclErrorTrapImp, errcode, mediaDataImpl = iMediaDataSimpleAlloc.allocate(8*1536));;
     OSCL_FIRST_CATCH_ANY(errcode, return FRAME_OUTPUTNOTAVAILABLE);
 
     errcode = 0;
@@ -145,8 +146,8 @@ OSCL_EXPORT_REF uint8 PV_LATM_Parser::compose(PVMFSharedMediaDataPtr& mediaDataI
 #else
     OSCL_TRY_NO_TLS(iOsclErrorTrapImp, errcode, mediaDataImpl = iMediaDataGroupAlloc->allocate((uint32)memFragIn.getMemFrag().len));
     OSCL_FIRST_CATCH_ANY(errcode, return FRAME_OUTPUTNOTAVAILABLE);
-#endif
 
+#endif
     /*
      *  Latch for very first packet, sequence number is not established yet.
      */
@@ -167,21 +168,46 @@ OSCL_EXPORT_REF uint8 PV_LATM_Parser::compose(PVMFSharedMediaDataPtr& mediaDataI
 
     last_timestamp = mediaDataIn->getTimestamp();
     last_sequence_num = seqNum;
-    last_mbit = mediaDataIn->getMarkerInfo();
 
-    if (dropFrames && mediaDataIn->getMarkerInfo())
+    if (dropFrames)
     {
-        /*
-         *  try to recover packet as sequencing was broken, new packet could be valid
-         *  it is possible that the received packet contains a complete audioMuxElement()
-         *  so try to retrieve it.
-         */
+        if (last_mbit)
+        {
+            /*
+             *  try to recover packet as sequencing was broken, new packet could be valid
+             *  it is possible that the received packet contains a complete audioMuxElement()
+             *  so try to retrieve it.
+             */
 
-        dropFrames = false;
+            dropFrames = false;
+        }
+        else
+        {
+
+            /*
+             *  we are in the middle of a spread audioMuxElement(), or faulty rtp header
+             *  return error
+             */
+
+            framesize = 0;
+            frameNum = 0;
+            bytesRead = 0;
+            compositenumframes = 0;
+
+            /*
+             *  Drop frame as we are not certain if it is a valid frame
+             */
+#ifndef LATM_PARSE_MULTIPLE_FRAGMENTS
+            memFragOut.getMemFrag().len = 0;
+            mediaDataOut->setMediaFragFilledLen(0, 0);
+#endif
+            firstBlock = true; // set for next call
+            last_mbit = mediaDataIn->getMarkerInfo();
+            return FRAME_ERROR;
+        }
     }
 
-    if (dropFrames == false)
-    {
+    last_mbit = mediaDataIn->getMarkerInfo();
 #ifndef LATM_PARSE_MULTIPLE_FRAGMENTS
         if (sMC->numSubFrames > 0 || (sMC->cpresent == 1 && ((*(uint8*)(memFragIn.getMemFrag().ptr)) &(0x80))))
         {
@@ -208,9 +234,9 @@ OSCL_EXPORT_REF uint8 PV_LATM_Parser::compose(PVMFSharedMediaDataPtr& mediaDataI
 #else
         retVal = composeFrame(mediaDataIn, mediaDataImpl);
 #endif
-    }
+
     // set this to drop frames in the future -- till we find another marker bit
-    if (dropFrames || (retVal == FRAME_ERROR))
+    if (retVal == FRAME_ERROR)
     {
         dropFrames = true;
 
@@ -384,6 +410,7 @@ uint8 PV_LATM_Parser::composeSingleFrame(PVMFSharedMediaDataPtr& mediaDataIn)
     int32 pktsize = memFragIn.getMemFrag().len;
 
     int32 m_bit = mediaDataIn->getMarkerInfo();
+
 
     /*
      *  All streams have same time framing (there is only one stream anyway)
@@ -584,8 +611,10 @@ uint8 PV_LATM_Parser::composeMultipleFrame(PVMFSharedMediaDataPtr& mediaDataIn)
                     // to update number of bytes copied
                     memFragOut.getMemFrag().len = 0;
                     mediaDataOut->setMediaFragFilledLen(0, 0);
-
-                    return FRAME_INCOMPLETE;
+                    bytesRead = 0;
+                    framesize = 0;
+                    compositenumframes = 0;
+                    return FRAME_ERROR;
                 }
             }
             oscl_memcpy((uint8*)memFragOut.getMemFrag().ptr + outPtrPos, myData, framesize);
@@ -623,37 +652,83 @@ uint8 PV_LATM_Parser::composeMultipleFrame(PVMFSharedMediaDataPtr& mediaDataIn)
 #else
 uint8 PV_LATM_Parser::composeFrame(PVMFSharedMediaDataPtr& mediaDataIn, OsclSharedPtr<PVMFMediaDataImpl>& aMediaFragGroup)
 {
-    OsclRefCounterMemFrag memFragIn;
-    mediaDataIn->getMediaFragment(0, memFragIn);
-    OsclRefCounter* refCntIn = memFragIn.getRefCounter();
-
-    int32 pktsize = memFragIn.getMemFrag().len;
-    uint8 *myData = (uint8*)memFragIn.getMemFrag().ptr;
-
     uint32 tmp;
     uint32 i;
-    for (i = 0; i <= sMC->numSubFrames; i++)
-    {
-        framesize = 0;
-        do
-        {
-            tmp = *(myData);
-            framesize += tmp;
-        }
-        while (*(myData++) == 0xff);
+    uint8 * myData;
+    OsclRefCounterMemFrag memFragIn;
+    mediaDataIn->getMediaFragment(0, memFragIn);
 
-        OsclMemoryFragment memFrag;
-        memFrag.ptr = myData;
-        memFrag.len = framesize;
-        refCntIn->addRef();
-        OsclRefCounterMemFrag refCountMemFragOut(memFrag, refCntIn, 0);
-        aMediaFragGroup->appendMediaFragment(refCountMemFragOut);
-        myData += framesize;
+    int32 pktsize = memFragIn.getMemFrag().len;
+
+    // make sure we have enough memory to hold the data
+    if (bytesRead + pktsize > currSize)
+    {
+        uint8 * tempPtr = (uint8*) oscl_calloc(bytesRead + pktsize, sizeof(uint8));
+        if (tempPtr == NULL)
+        {
+            // memory problem?
+            return FRAME_ERROR;
+        }
+        currSize = bytesRead + pktsize;
+        oscl_memcpy(tempPtr, multiFrameBuf, bytesRead);
+        oscl_free(multiFrameBuf);
+        multiFrameBuf = tempPtr;
     }
 
-    mediaDataOut = PVMFMediaData::createMediaData(aMediaFragGroup, &iMediaDataMemPool);
-    mediaDataOut->setSeqNum(mediaDataIn->getSeqNum());
-    mediaDataOut->setTimestamp(mediaDataIn->getTimestamp());
+    /*Keep buffering till the marker is received */
+    oscl_memcpy(multiFrameBuf + bytesRead, memFragIn.getMemFrag().ptr, pktsize);
+    bytesRead =+ pktsize;
+
+    /*If the marker is received start looking for LATM fragments */
+    if(last_mbit)
+    {
+        myData = multiFrameBuf;
+        for (i = 0; i <= (sMC->numSubFrames); i++)
+        {
+            framesize = 0;
+            do
+            {
+                tmp = *(myData);
+                framesize += tmp;
+            }
+            while (*(myData++) == 0xff);
+
+            /*Allocate a buffer for the LATM fragment*/
+            int32 errcode = 0;
+            OsclSharedPtr<PVMFMediaDataImpl> mediaDataImpl;
+            OSCL_TRY_NO_TLS(iOsclErrorTrapImp, errcode, mediaDataImpl = iMediaDataSimpleAlloc.allocate(framesize))
+            OSCL_FIRST_CATCH_ANY(errcode, return FRAME_OUTPUTNOTAVAILABLE);
+            OsclRefCounterMemFrag memFragOut;
+
+            /*Copy the data */
+            mediaDataImpl->getMediaFragment(0,memFragOut );
+            oscl_memcpy((uint8*)memFragOut.getMemFrag().ptr, myData, framesize);
+            memFragOut.getMemFrag().len = framesize;
+            aMediaFragGroup->appendMediaFragment(memFragOut);
+
+            myData += framesize;
+        }
+
+        /*Create the final media data out from the frgament group*/
+        mediaDataOut = PVMFMediaData::createMediaData(aMediaFragGroup, &iMediaDataMemPool);
+        mediaDataOut->setSeqNum(frameSeqNum++);
+        mediaDataOut->setTimestamp(mediaDataIn->getTimestamp());
+        compositenumframes = 0;
+        bytesRead = 0;
+    }
+    else
+    {
+        compositenumframes++;
+        if (compositenumframes < MAX_NUM_COMPOSITE_FRAMES)
+        {
+            return FRAME_INCOMPLETE;
+        }
+        else
+        {
+            return FRAME_ERROR;
+        }
+
+    }
 
     return FRAME_COMPLETE;
 }

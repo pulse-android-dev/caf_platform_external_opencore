@@ -181,6 +181,7 @@ class PV_LATM_Parser
         bool startedParsing;
         uint8* framePos;
         int32 frameCount;
+        int32 frameSeqNum;
 
         OsclErrorTrapImp* iOsclErrorTrapImp;
 

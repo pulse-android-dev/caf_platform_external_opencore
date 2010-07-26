@@ -1886,6 +1886,7 @@ bool PVMFOMXAudioDecNode::GetSetCodecSpecificInfo()
 
         iNumBytesPerFrame = 2 * iSamplesPerFrame * iNumberOfAudioChannels;
         iMilliSecPerFrame = (iSamplesPerFrame * 1000) / iPCMSamplingRate;
+        iMsPerFrame = iMilliSecPerFrame;
         // Determine the size of each PCM output buffer. Size would be big enough to hold certain time amount of PCM data
         uint32 numframes = PVOMXAUDIODEC_DEFAULT_OUTPUTPCM_TIME / iMilliSecPerFrame;
 
