@@ -67,8 +67,13 @@ AudioSampleEntry::AudioSampleEntry(MP4_FF_FILE *fp, uint32 size, uint32 type, bo
             {
                 uint32 atomType = UNKNOWN_ATOM;
                 uint32 atomSize = 0;
+                int32 filePointer;
 
-                AtomUtils::getNextAtomType(fp, atomSize, atomType);
+                do
+                {
+                    AtomUtils::getNextAtomType(fp, atomSize, atomType);
+                    filePointer = AtomUtils::getCurrentFilePosition(fp);
+                } while((atomType != ESD_ATOM) && (filePointer <= (fp->_fileSize - DEFAULT_ATOM_SIZE)));
 
                 if (atomType == ESD_ATOM)
                 {
