@@ -135,6 +135,7 @@ public:
     void incFrameCount(uint32_t numFrames) { iFrameCount += numFrames; }
     void setFrameRate(float msecsPerFrame) { iMsecsPerFrame = msecsPerFrame; }
     float msecsPerFrame() { return iMsecsPerFrame; }
+    void checkDelayedStart(bool flag) {checkForDelayedStart = !flag;}
 
 private:
     PVMFMediaClock* iClock;
