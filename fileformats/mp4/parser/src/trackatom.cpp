@@ -80,7 +80,8 @@ TrackAtom::TrackAtom(MP4_FF_FILE *fp,
                 (atomType == FREE_SPACE_ATOM) ||
 
                 (atomType == UUID_ATOM) ||
-                (atomType == UNKNOWN_ATOM))
+                (atomType == UNKNOWN_ATOM) ||
+                (atomType == META_DATA_ATOM))
                 && (count > 0))
         {
             AtomUtils::getNextAtomType(fp, atomSize, atomType);
@@ -100,7 +101,8 @@ TrackAtom::TrackAtom(MP4_FF_FILE *fp,
             }
             else if ((atomType == FREE_SPACE_ATOM)
                      || (atomType == UUID_ATOM)
-                     || (atomType == UNKNOWN_ATOM))
+                     || (atomType == UNKNOWN_ATOM)
+                     || (atomType == META_DATA_ATOM))
             {
                 if (atomSize < DEFAULT_ATOM_SIZE)
                 {
