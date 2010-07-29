@@ -5704,7 +5704,9 @@ bool PVMFSMRTSPUnicastNode::SendSessionSourceInfoToSessionController()
                     sizeInBytes += 2 * MAX_SOCKET_BUFFER_SIZE;
                 }
                 sInfo.iBufSize = sizeInBytes;
-                sInfo.iTargetTime = iJitterBufferDurationInMilliSeconds;
+                //This should be the JB lower water mark as per 3gpp spec
+                //Lab experiments show that 500 msec is a optimal value
+                sInfo.iTargetTime = (MIN_JITTER_BUFFER_DURATION_IN_MS/2);
             }
             aSelectedStream.push_back(sInfo);
         }
