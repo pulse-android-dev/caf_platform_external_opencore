@@ -2015,6 +2015,10 @@ status_t PVPlayer::resume()
 // Static
 status_t PVPlayer::usePVPlayer(const char *filename)
 {
+    char value[PROPERTY_VALUE_MAX];
+    property_get("ro.product.device",value,"0");
+    if(strcmp("msm7630_surf",value) != 0) return OK;
+
     LOGV("usePVPlayer: In usePVPlayer function, filename: %s",filename);
 
     oscl_wchar output[MAX_BUFF_SIZE];
@@ -2034,61 +2038,62 @@ status_t PVPlayer::usePVPlayer(const char *filename)
 
     //Check for clips with LPA implementation in PVPlayer
     //First check if MP4 containing an aac audio stream
-    Oscl_FileServer iFs;
+    if (InitializeForThread()) {
+        Oscl_FileServer iFs;
+        if (iFs.Connect() ==0) {
+            IMpeg4File *mp4Input = IMpeg4File::readMP4File(wFilename, NULL, NULL, 1, &iFs);
+            if (mp4Input)
+            {
+                LOGV("usePVPlayer: recognized mp4 container");
+                // check to see if the file contains video
+                uint64 duration;
+                uint32 timeScale;
+                int32 count = mp4Input->getNumTracks();
+                uint32* tracks = new uint32[count];
+                uint8 objectType;
 
-    if (iFs.Connect() ==0) {
-        IMpeg4File *mp4Input = IMpeg4File::readMP4File(wFilename, NULL, NULL, 1, &iFs);
-        if (mp4Input)
-        {
-            LOGV("usePVPlayer: recognized mp4 container");
-            // check to see if the file contains video
-            uint64 duration;
-            uint32 timeScale;
-            int32 count = mp4Input->getNumTracks();
-            uint32* tracks = new uint32[count];
-            uint8 objectType;
+                if (tracks) {
+                    mp4Input->getTrackIDList(tracks, count);
+                    for (int i = 0; i < count; ++i) {
+                        OSCL_HeapString<OsclMemAllocator> streamtype;
 
-            if (tracks) {
-                mp4Input->getTrackIDList(tracks, count);
-                for (int i = 0; i < count; ++i) {
-                    OSCL_HeapString<OsclMemAllocator> streamtype;
+                        mp4Input->getTrackMIMEType(tracks[i], streamtype);
+                        if (streamtype.get_size()) {
+                            LOGV("usePVPlayer: got streamtype %s",streamtype.get_cstr());
 
-                    mp4Input->getTrackMIMEType(tracks[i], streamtype);
-                    if (streamtype.get_size()) {
-                        LOGV("usePVPlayer: got streamtype %s",streamtype.get_cstr());
+                            //MIME type X-MPEG4_AUDIO indicates AAC in MP4
+                            if (!LPAInstanceExists && streamtype==PVMF_MIME_MPEG4_AUDIO) {
+                                LOGV("usePVPlayer: recognized file as AAC in MP4");
 
-                        //MIME type X-MPEG4_AUDIO indicates AAC in MP4
-                        if (!LPAInstanceExists && streamtype==PVMF_MIME_MPEG4_AUDIO) {
-                            LOGV("usePVPlayer: recognized file as AAC in MP4");
+                                duration = mp4Input->getMovieDuration();
+                                timeScale =  mp4Input->getMovieTimescale();
 
-                            duration = mp4Input->getMovieDuration();
-                            timeScale =  mp4Input->getMovieTimescale();
-
-                            // adjust duration to milliseconds if necessary
-                            duration = (duration * 1000) / timeScale;
-                            LOGV("usePVPlayer: got duration of %llu milliseconds",duration);
-                            if (duration >= MIN_LPA_DURATION) {
-                                LPAInstanceExists = true;
+                                // adjust duration to milliseconds if necessary
+                                duration = (duration * 1000) / timeScale;
+                                LOGV("usePVPlayer: got duration of %llu milliseconds",duration);
+                                if (duration >= MIN_LPA_DURATION) {
+                                    LPAInstanceExists = true;
+                                    return OK;
+                                }
+                                else {
+                                    LOGV("usePVPlayer: duration of aac too short to use LPA");
+                                    return UNKNOWN_ERROR;
+                                }
+                            }
+                            else if (streamtype==PVMF_MIME_QCELP || streamtype==PVMF_MIME_EVRC) {
+                                LOGV("usePVPlayer: recognized qcelp or evrc file");
                                 return OK;
                             }
-                            else {
-                                LOGV("usePVPlayer: duration of aac too short to use LPA");
-                                return UNKNOWN_ERROR;
-                            }
-                        }
-                        else if (streamtype==PVMF_MIME_QCELP || streamtype==PVMF_MIME_EVRC) {
-                            LOGV("usePVPlayer: recognized qcelp or evrc file");
-                            return OK;
                         }
                     }
+                delete[] tracks;
                 }
-            delete[] tracks;
             }
+            iFs.Close();
+            IMpeg4File::DestroyMP4FileObject(mp4Input);
         }
-        iFs.Close();
-        IMpeg4File::DestroyMP4FileObject(mp4Input);
+        UninitializeForThread();
     }
-
     //Then check if MP3 of sufficient length
     if (!LPAInstanceExists) {
         MP3ErrorType mp3Err;
