@@ -348,6 +348,22 @@ PVMFStatus PVMFOMXVideoDecNode::HandlePortReEnable()
         int32 err, err1;
         ipExternalOutputBufferAllocatorInterface = NULL;
 
+        //Make sure that size of queue is equal to the number of buffers so
+        //that even frames that are arriving fast are not dropped
+        OSCL_TRY(err, ((PVMFOMXDecPort*)iOutPort)->SetCapacity(EPVOutgoingDataQueue ,iNumOutputBuffers););
+        if (err != OsclErrNone)
+        {
+            PVLOGGER_LOGMSG(PVLOGMSG_INST_LLDBG, iLogger, PVLOGMSG_DEBUG,
+                            (0,"PVMFOMXVideoDecNode::HandlePortReEnable - SetCapacity failed"));
+        }
+        else
+        {
+             OSCL_TRY(err,((PVMFOMXDecPort*)iOutPort)->SetReserve(EPVOutgoingDataQueue  ,iNumOutputBuffers););
+             if (err != OsclErrNone)
+                 PVLOGGER_LOGMSG(PVLOGMSG_INST_LLDBG, iLogger, PVLOGMSG_DEBUG,
+                                 (0,"PVMFOMXVideoDecNode::HandlePortReEnable - SetReserve failed"));
+        }
+
         OSCL_TRY(err, ((PVMFOMXDecPort*)iOutPort)->pvmiGetBufferAllocatorSpecificInfoSync(aIdentifier, kvp, numKvp););
 
         if ((err == OsclErrNone) && (NULL != kvp))
