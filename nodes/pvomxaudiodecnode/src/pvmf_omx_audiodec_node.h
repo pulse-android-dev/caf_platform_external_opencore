@@ -134,6 +134,8 @@ class PVMFOMXAudioDecNode
 
         bool ReleaseAllPorts();
 
+        PVMFStatus ProcessExtraDataBlocksOfBuffer(OMX_BUFFERHEADERTYPE* aBuffer);
+
         OMX_AUDIO_CODINGTYPE iOMXAudioCompressionFormat;
 
         // Audio parameters

@@ -3874,6 +3874,16 @@ OMX_ERRORTYPE PVMFOMXBaseDecNode::FillBufferDoneProcessing(OMX_OUT OMX_HANDLETYP
         PVLOGGER_LOGMSG(PVLOGMSG_INST_LLDBG, iLogger, PVLOGMSG_STACK_TRACE,
                         (0, "%s::FillBufferDoneProcessing: Output frame %d received", iName.Str(), iFrameCounter++));
 
+        // process if any extra data blocks
+        if(PVMFSuccess != ProcessExtraDataBlocksOfBuffer(aBuffer))
+        {
+            PVLOGGER_LOGMSG(PVLOGMSG_INST_HLDBG, iLogger, PVLOGMSG_ERR,
+                            (0, "%s::FillBufferDoneProcessing: - ProcessExtraDataBlocksOfBuffer() did not return Success", iName.Str()));
+
+            iOutBufMemoryPool->deallocate(pContext);
+            return OMX_ErrorNone;
+        }
+
         // get pointer to actual buffer data
         uint8 *pBufdata = ((uint8*) aBuffer->pBuffer);
         // move the data pointer based on offset info

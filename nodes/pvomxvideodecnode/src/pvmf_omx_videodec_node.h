@@ -184,6 +184,8 @@ class PVMFOMXVideoDecNode
         PVMFStatus GetProfileAndLevel(PVMF_MPEGVideoProfileType& aProfile, PVMF_MPEGVideoLevelType& aLevel);
         int32 GetNAL_OMXNode(uint8** bitstream, int* size);
 
+        PVMFStatus ProcessExtraDataBlocksOfBuffer(OMX_BUFFERHEADERTYPE* aBuffer);
+
         OMX_COLOR_FORMATTYPE iOMXVideoColorFormat;
         OMX_VIDEO_CODINGTYPE iOMXVideoCompressionFormat;
         PVMFFormatType iYUVFormat;
@@ -215,6 +217,7 @@ class PVMFOMXVideoDecNode
         uint16 iH264FragSize;
 
         bool bThumbnailMode;
+        bool iInterlaceFormatDetected;
 };
 
 

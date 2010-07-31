@@ -203,7 +203,7 @@ PVMFOMXVideoDecNode::PVMFOMXVideoDecNode(int32 aPriority, bool aHwAccelerated, b
     iH264FragSize = 0;
     iH264InitBuffer = NULL;
     iH264InitBufSize = 0;
-
+    iInterlaceFormatDetected = 0;
     bThumbnailMode = aThumbnailMode;
 }
 
@@ -1684,7 +1684,8 @@ bool PVMFOMXVideoDecNode::QueueOutputBuffer(OsclSharedPtr<PVMFMediaDataImpl> &me
 
 
         // in case of special YVU format, attach fsi to every outgoing message containing ptr to private data
-        if ((iYUVFormat == PVMF_MIME_YUV420_SEMIPLANAR_YVU) || (iYUVFormat == PVMF_MIME_YUV420_SEMIPLANAR) || (iYUVFormat == PVMF_MIME_YUV420_PACKEDSEMIPLANAR_TILE))
+        if ((iYUVFormat == PVMF_MIME_YUV420_SEMIPLANAR_YVU) || (iYUVFormat == PVMF_MIME_YUV420_SEMIPLANAR) ||
+            (iYUVFormat == PVMF_MIME_YUV420_PACKEDSEMIPLANAR_TILE) || (iYUVFormat == PVMF_MIME_YUV420_SEMIPLANAR_YVU_INTERLACE))
         {
             OsclRefCounterMemFrag privatedataFsiMemFrag;
 
@@ -4169,6 +4170,81 @@ PVMFStatus PVMFOMXVideoDecNode::GetProfileAndLevel(PVMF_MPEGVideoProfileType& aP
 
 
 }
+
+///////////////////////////////////////////////////////////////////////////////
+////////// Process any additonal payload information included within the buffer
+///////////////////////////////////////////////////////////////////////////////
+OSCL_EXPORT_REF PVMFStatus PVMFOMXVideoDecNode::ProcessExtraDataBlocksOfBuffer(OMX_BUFFERHEADERTYPE* aBuffer)
+{
+    PVLOGGER_LOGMSG(PVLOGMSG_INST_LLDBG, iLogger, PVLOGMSG_STACK_TRACE,
+                    (0, "%s::ProcessExtraDataBlocksOfBuffer: In", iName.Str()));
+
+    if(!iInterlaceFormatDetected)
+    {
+        if(aBuffer->nFlags & OMX_BUFFERFLAG_EXTRADATA)
+        {
+            OMX_OTHER_EXTRADATATYPE *pExtra;
+            OMX_STREAMINTERLACEFORMAT *pInterlaceFormat;
+            OMX_U8 *pTmp = aBuffer->pBuffer + aBuffer->nOffset + aBuffer->nFilledLen + 3;
+
+            pExtra = (OMX_OTHER_EXTRADATATYPE *)(((OMX_U32)pTmp) & ~3);
+            while((pExtra->eType != OMX_ExtraDataNone) && (pExtra->eType != OMX_ExtraDataInterlaceFormat))
+            {
+                pExtra = (OMX_OTHER_EXTRADATATYPE *) (((OMX_U8 *) pExtra) + pExtra->nSize);
+            }
+
+            if(pExtra->eType == OMX_ExtraDataInterlaceFormat)
+            {
+                pInterlaceFormat = (OMX_STREAMINTERLACEFORMAT *)pExtra->data;
+
+                PVLOGGER_LOGMSG(PVLOGMSG_INST_LLDBG, iLogger, PVLOGMSG_STACK_TRACE,
+                               (0, "%s::ProcessExtraDataBlocksOfBuffer: interlaceType: %s", iName.Str(),
+                               (pInterlaceFormat->bInterlaceFormat == OMX_TRUE)?"Interlaced":"Progressive"));
+
+                if(pInterlaceFormat->bInterlaceFormat == OMX_TRUE)
+                {
+                   if(pInterlaceFormat->nInterlaceFormats == OMX_InterlaceFrameProgressive)
+                       PVLOGGER_LOGMSG(PVLOGMSG_INST_LLDBG, iLogger, PVLOGMSG_STACK_TRACE,
+                                      (0, "%s::ProcessExtraDataBlocksOfBuffer: Interlace Type %s", iName.Str(),
+                                      "Progressive"));
+                   if(pInterlaceFormat->nInterlaceFormats == OMX_InterlaceInterleaveFrameTopFieldFirst)
+                       PVLOGGER_LOGMSG(PVLOGMSG_INST_LLDBG, iLogger, PVLOGMSG_STACK_TRACE,
+                                      (0, "%s::ProcessExtraDataBlocksOfBuffer: Interlace Type %s", iName.Str(),
+                                      "InterleaveFrameTopFieldFirst"));
+                   if(pInterlaceFormat->nInterlaceFormats == OMX_InterlaceInterleaveFrameBottomFieldFirst)
+                       PVLOGGER_LOGMSG(PVLOGMSG_INST_LLDBG, iLogger, PVLOGMSG_STACK_TRACE,
+                                      (0, "%s::ProcessExtraDataBlocksOfBuffer: Interlace Type %s", iName.Str(),
+                                      "InterleaveFrameBottomFieldFirst"));
+                   if(pInterlaceFormat->nInterlaceFormats == OMX_InterlaceFrameTopFieldFirst)
+                       PVLOGGER_LOGMSG(PVLOGMSG_INST_LLDBG, iLogger, PVLOGMSG_STACK_TRACE,
+                                      (0, "%s::ProcessExtraDataBlocksOfBuffer: Interlace Type %s", iName.Str(),
+                                      "FrameTopFieldFirst)"));
+                   if(pInterlaceFormat->nInterlaceFormats == OMX_InterlaceFrameBottomFieldFirst)
+                       PVLOGGER_LOGMSG(PVLOGMSG_INST_LLDBG, iLogger, PVLOGMSG_STACK_TRACE,
+                                      (0, "%s::ProcessExtraDataBlocksOfBuffer: Interlace Type %s", iName.Str(),
+                                      "FrameBottomFieldFirst"));
+
+                   if((pInterlaceFormat->nInterlaceFormats == OMX_InterlaceInterleaveFrameTopFieldFirst) ||
+                      (pInterlaceFormat->nInterlaceFormats == OMX_InterlaceInterleaveFrameBottomFieldFirst))
+                   {
+                        // set interlace format
+                        iYUVFormat = PVMF_MIME_YUV420_SEMIPLANAR_YVU_INTERLACE;
+                        sendFsi = true;
+                        iCompactFSISettingSucceeded = false;
+                   }
+                }
+            }
+
+        }
+        iInterlaceFormatDetected = true;
+    }
+
+    PVLOGGER_LOGMSG(PVLOGMSG_INST_LLDBG, iLogger, PVLOGMSG_STACK_TRACE,
+                    (0, "%s::ProcessExtraDataBlocksOfBuffer: Out", iName.Str()));
+
+   return PVMFSuccess;
+}
+
 
 
 // DEFINITIONS for parsing the config information & sequence header for WMV

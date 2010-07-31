@@ -3495,5 +3495,13 @@ void PVMFOMXAudioDecNode::DoCapConfigSetParameters(PvmiKvp* aParameters, int aNu
                     (0, "PVMFOMXAudioDecNode::DoCapConfigSetParameters() Out\n"));
 }
 
+///////////////////////////////////////////////////////////////////////////////
+////////// Process any additonal payload information included within the buffer
+///////////////////////////////////////////////////////////////////////////////
+OSCL_EXPORT_REF PVMFStatus PVMFOMXAudioDecNode::ProcessExtraDataBlocksOfBuffer(OMX_BUFFERHEADERTYPE* aBuffer)
+{
+   //process if any audio specific extra data type blocks
+   return PVMFSuccess;
+}
 
 

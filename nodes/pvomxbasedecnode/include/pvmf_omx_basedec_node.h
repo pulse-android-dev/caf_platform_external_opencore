@@ -587,6 +587,9 @@ class PVMFOMXBaseDecNode
 
         OSCL_IMPORT_REF PVMFCommandId QueueCommandL(PVMFOMXBaseDecNodeCommand& aCmd);
 
+        // process additional buffer payload information
+        virtual PVMFStatus ProcessExtraDataBlocksOfBuffer(OMX_BUFFERHEADERTYPE* aBuffer) = 0;
+
         friend class PVMFOMXBaseDecPort;
 
         // Ports pointers
