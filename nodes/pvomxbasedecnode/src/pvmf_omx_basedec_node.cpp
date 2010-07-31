@@ -4290,14 +4290,14 @@ void PVMFOMXBaseDecNode::DoPrepare(PVMFOMXBaseDecNodeCommand& aCmd)
                     }
                     else
                     {
-
                         char value[PROPERTY_VALUE_MAX];
                         property_get("ro.product.device",value,"0");
                         if(strcmp("qsd8250_ffa",value) == 0 || strcmp("qsd8250_surf",value) == 0)
                         {
-                            if(checkHWAccelconditions(aInputParameters.cComponentRole, ((VideoOMXConfigParserOutputs *)aOutputParameters)->profile))
+                            if(bThumbnailMode && !bHWAccelerated)
                             {
-                                ii = -1;
+                                bHWAccelerated = OMX_TRUE;
+                                ii=-1;
                                 continue;
                             }
                         }
