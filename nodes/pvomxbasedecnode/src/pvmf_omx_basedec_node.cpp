@@ -567,7 +567,8 @@ OSCL_EXPORT_REF PVMFOMXBaseDecNode::PVMFOMXBaseDecNode(int32 aPriority, const ch
         iCompactFSISettingSucceeded(false),
         bHWAccelerated(accelerated? OMX_TRUE: OMX_FALSE),
         bThumbnailMode(thumbnailmode? OMX_TRUE: OMX_FALSE),
-        ipPMemBufferAlloc(NULL)
+        ipPMemBufferAlloc(NULL),
+        first_iframe_received(OMX_FALSE)
 {
     iThreadSafeHandlerEventHandler = NULL;
     iThreadSafeHandlerEmptyBufferDone = NULL;
@@ -3847,6 +3848,15 @@ OMX_ERRORTYPE PVMFOMXBaseDecNode::FillBufferDoneProcessing(OMX_OUT OMX_HANDLETYP
                         (0, "%s::FillBufferDoneProcessing: Output buffer has EOS set", iName.Str()));
 
     }
+
+#ifdef DROP_UNTIL_IFRAME_RECD
+    if (aBuffer->nFlags & OMX_BUFFERFLAG_SYNCFRAME) {
+        first_iframe_received = OMX_TRUE;
+        iDoNotSendOutputBuffersDownstreamFlag = false;
+    } else if(first_iframe_received != OMX_TRUE) {
+        iDoNotSendOutputBuffersDownstreamFlag = true;
+    }
+#endif
 
     // if a buffer is empty, or if it should not be sent downstream (say, due to state change)
     // release the buffer back to the pool
