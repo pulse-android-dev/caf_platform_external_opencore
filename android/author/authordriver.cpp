@@ -685,6 +685,18 @@ void AuthorDriver::handleSetVideoEncoder(set_video_encoder_command *ac)
         ((AndroidCameraInput *)mVideoInputMIO)->SetFrameSize(mVideoWidth, mVideoHeight);
     }
 
+    if ((mVideoWidth == 1280) &&
+        (mVideoHeight == 720)) {
+        if (mVideoEncoder == VIDEO_ENCODER_H263) {
+            HandleInformationalEvent(MEDIA_RECORDER_UNSUPPORTED_RESOLUTION);
+        }
+#ifdef SURF8K_7x27
+        else if (mVideoEncoder == VIDEO_ENCODER_H264){
+            HandleInformationalEvent(MEDIA_RECORDER_UNSUPPORTED_RESOLUTION);
+        }
+#endif
+    }
+
     OSCL_TRY(error, mAuthor->AddMediaTrack(*mVideoNode, iVideoEncoderMimeType, mSelectedComposer, mVideoEncoderConfig, ac));
     OSCL_FIRST_CATCH_ANY(error, commandFailed(ac));
 }
@@ -1577,6 +1589,9 @@ static int GetMediaRecorderInfoCode(const PVAsyncInformationalEvent& aEvent) {
 
         case PVMF_COMPOSER_MAXFILESIZE_REACHED:
             return MEDIA_RECORDER_INFO_MAX_FILESIZE_REACHED;
+
+        case MEDIA_RECORDER_UNSUPPORTED_RESOLUTION:
+            return MEDIA_RECORDER_UNSUPPORTED_RESOLUTION;
 
         default:
             return MEDIA_RECORDER_INFO_UNKNOWN;
