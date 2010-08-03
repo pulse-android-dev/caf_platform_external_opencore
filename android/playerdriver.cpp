@@ -97,7 +97,7 @@ using namespace android;
 # endif
 
 #define MAX_BUFF_SIZE 1024
-#define MIN_LPA_DURATION 360000
+#define MIN_LPA_DURATION 60000
 
 // library and function name to retrieve device-specific MIOs
 static const char* MIO_LIBRARY_NAME = "libopencorehw.so";
