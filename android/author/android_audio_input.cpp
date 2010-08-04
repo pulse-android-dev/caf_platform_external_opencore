@@ -51,6 +51,15 @@ static const int32 AUTO_RAMP_START_MS = 600;
 // over the next 300ms.
 static const int32 AUTO_RAMP_DURATION_MS = 300;
 
+// AAC silence frame size which includes size of the frame also
+#define AAC_MONO_SILENCE_FRAME_SIZE 12   // this includes the length of silence frame
+#define AAC_STEREO_SILENCE_FRAME_SIZE 13 // this includes the length of silence frame
+#define SILENCE_INSERTION_TIME_PERIOD 600
+//AAC silence frame data
+// First two bytes indicate the length of silence frame
+static const uint8  AAC_MONO_SILENCE_FRAME_WITH_SIZE[]   = {0x0A, 0x00, 0x01, 0x40, 0x20, 0x06, 0x4F, 0xDE, 0x02, 0x70, 0x0C, 0x1C};
+static const uint8  AAC_STEREO_SILENCE_FRAME_WITH_SIZE[] = {0x0B, 0x00, 0x21, 0x10, 0x05, 0x00, 0xA0, 0x19, 0x33, 0x87, 0xC0, 0x00, 0x7E};
+
 ////////////////////////////////////////////////////////////////////////////
 AndroidAudioInput::AndroidAudioInput(uint32 audioSource)
     : OsclTimerObject(OsclActiveObject::EPriorityNominal, "AndroidAudioInput"),
@@ -1456,6 +1465,29 @@ int AndroidAudioInput::audin_thread_func() {
            LOGV("Audio Ts = %u, ts(data) = %u, ts - tsd = %u, delta = %u", iSysTimeStamp, iTimeStamp,
                 iSysTimeStamp - iTimeStamp, iSysTimeStamp - prevTimeStamp);
 #endif
+
+           //Insert silence in first 600 ms of aac data to mask beep sound of
+           //camcorder recording
+           if( iAudioFormatType == android::AudioSystem::AAC && iTimeStamp <= SILENCE_INSERTION_TIME_PERIOD ){
+               int frameCount = numFrames,silenceFrameSize = 0;
+               uint8* dataPtr = data + 6; // Point to size of first frame
+               const uint8* silenceFrameData = NULL;
+               numOfBytes = 0;
+               if(iAudioNumChannels > 1) {
+                   silenceFrameData = AAC_STEREO_SILENCE_FRAME_WITH_SIZE;
+                   silenceFrameSize = AAC_STEREO_SILENCE_FRAME_SIZE;
+               }
+               else {
+                   silenceFrameData = AAC_MONO_SILENCE_FRAME_WITH_SIZE;
+                   silenceFrameSize = AAC_MONO_SILENCE_FRAME_SIZE;
+               }
+               while(frameCount > 0) {
+                   memcpy(dataPtr,silenceFrameData,silenceFrameSize);
+                   dataPtr+=silenceFrameSize;
+                   numOfBytes+=silenceFrameSize - 2;
+                   frameCount--;
+               }
+           }
 
            MicData micdata(data, numOfBytes, iTimeStamp,
                            dataDuration);
